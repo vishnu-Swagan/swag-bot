@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Verification-gated skill learning. A successful run can be distilled into a
+  Cowork-compatible `SKILL.md` and kept in `$SWAG_HOME/skill-candidates/` until
+  evidence verification and a replay both pass.
+  `swag skill learn|candidates|promote|reject|recheck`. Promoted skills land in
+  `$SWAG_HOME/skills/` with provenance. Unverified runs are never activated.
+  Evidence and replay are protocols with safe stubs until those features land.
+
 ## [0.1.0] - 2026-09-27
 
 First tagged release. This is the v0 agent: `swag run` plans a goal, carries
