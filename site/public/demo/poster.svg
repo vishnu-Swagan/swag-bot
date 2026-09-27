@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-label="Swag Bot demo poster">
+  <rect width="1280" height="720" fill="#09090b"/>
+  <rect x="96" y="88" width="1088" height="544" rx="28" fill="#111113" stroke="rgba(255,255,255,0.12)"/>
+  <text x="140" y="156" fill="#8b8b96" font-family="ui-monospace, monospace" font-size="22">session · evidence</text>
+  <text x="140" y="230" fill="#fafafa" font-family="ui-monospace, monospace" font-size="28">$ swag run "print the 10th Fibonacci number"</text>
+  <text x="140" y="284" fill="#8b8b96" font-family="ui-monospace, monospace" font-size="24">model qwen2.5:3b · harness tiny · plain CPU</text>
+  <text x="140" y="338" fill="#d6ff4a" font-family="ui-monospace, monospace" font-size="24">evidence ev_7f3a   exit 0   stdout 55   78s</text>
+  <text x="140" y="392" fill="#86efac" font-family="ui-monospace, monospace" font-size="24">verdict pass   cites ev_7f3a</text>
+  <text x="140" y="470" fill="#fda4af" font-family="ui-monospace, monospace" font-size="24">model "All tests passed" · evidence ev_91c2 exit 1</text>
+  <text x="140" y="524" fill="#fda4af" font-family="ui-monospace, monospace" font-size="24">verdict fail · not done</text>
+</svg>

@@ -1,26 +1,26 @@
-import { Demo } from "@/components/Demo";
-import { Features } from "@/components/Features";
-import { Footer } from "@/components/Footer";
-import { Hero } from "@/components/Hero";
-import { Install } from "@/components/Install";
-import { LoopStory } from "@/components/LoopStory";
-import { Nav } from "@/components/Nav";
+import { FeatureBento } from "@/components/home/feature-bento";
+import { DemoSlot } from "@/components/home/demo-slot";
+import { Hero } from "@/components/home/hero";
+import { ModelPicker } from "@/components/home/model-picker";
+import { Comparison, Faq, FinalCta, HowItWorks, Integrations, Safety } from "@/components/home/sections";
+import { pageMeta } from "@/lib/metadata";
+import { DESCRIPTION } from "@/lib/site";
+
+export const metadata = pageMeta("Swag Bot — done only when the evidence agrees", DESCRIPTION, "/", true);
 
 export default function HomePage() {
   return (
     <>
-      <a className="skip-link" href="#main">
-        Skip to content
-      </a>
-      <Nav />
-      <main id="main">
-        <Hero />
-        <LoopStory />
-        <Features />
-        <Demo />
-        <Install />
-      </main>
-      <Footer />
+      <Hero />
+      <HowItWorks />
+      <FeatureBento />
+      <ModelPicker />
+      <Safety />
+      <Integrations />
+      <Comparison />
+      <DemoSlot />
+      <Faq />
+      <FinalCta />
     </>
   );
 }
