@@ -212,7 +212,9 @@ load `.env` by itself.
 
 | Command | Status |
 | --- | --- |
-| `swag run "<goal>"` | plans, runs, and verifies; writes `summary.md` |
+| `swag run "<goal>"` | plans, runs, and verifies; writes `summary.md`. `--record` also writes a run bundle |
+| `swag replay <bundle>` | re-executes a bundle from saved model responses, or live to compare |
+| `swag bundle inspect\|export` | summarize a bundle, or zip it for a bug report |
 | `swag plugin` / `swag skill` | load, install, and list Cowork-compatible plugins and skills |
 | `swag safety log\|policy` | action log and autonomy rules |
 | `swag mcp list\|tools\|add\|remove` | MCP servers in `~/.swag/mcp.json` |

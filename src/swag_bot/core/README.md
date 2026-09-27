@@ -27,6 +27,8 @@ Built-in tools, registered on the `ToolRegistry` and executed through the `Sandb
 
 The command writes `plan.json`, `action-log.jsonl`, `run.jsonl`, and `summary.md` under `--output-dir` (default `./swag-output/<UTC timestamp>`). The same actions are appended to `$SWAG_HOME/actions.jsonl`, which is what `swag safety log` prints. `--dry-run` plans only. `--no-evidence` skips the citation requirement. The terminal shows a live task list (`pending`, `running`, `done`, `failed`, `unverified`, `skipped`) and streams step output.
 
+`--record` (or `bundle.record` in config) also writes a run bundle: the plan, every model request and response, tool calls and results, approvals, file diffs, and the evidence ledger when `<output-dir>/run.jsonl` exists. `swag replay` runs that bundle again. The format and the `replay_run` API are in `docs/spec/run-bundle.md`.
+
 ## CLI
 
 `cli.py` defines `run`. The root app flattens it to `swag run`.

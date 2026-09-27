@@ -175,6 +175,16 @@ Each run also appends the same actions to `$SWAG_HOME/actions.jsonl`, which
 `swag safety log` reads. `--evidence` is on by default; `--no-evidence` lets a
 step pass on the model's word and still writes the action index.
 
+`--record` writes a portable run bundle under the output directory
+(`--bundle` picks the path). `swag replay <bundle>` runs it again from the
+saved model responses, offline. `swag replay <bundle> --mode live` calls a
+model and compares. `swag bundle inspect` and `swag bundle export` are how
+you read a bundle and zip it for a bug report. The format is
+[docs/spec/run-bundle.md](docs/spec/run-bundle.md). Set `bundle.record = true`
+in config to record every run. Secrets are redacted before the bundle is
+written. The bundle copies `run.jsonl`, records undo tree hashes, and stores
+whether the plan fell back, whether `--strict-plan` was on, and the memory mode.
+
 Other useful flags: `--dry-run`, `--max-steps`, `--max-attempts`,
 `--concurrency`, `--model`, `--evidence` / `--no-evidence`, and `--engine`
 (`python` or `graphbit`).

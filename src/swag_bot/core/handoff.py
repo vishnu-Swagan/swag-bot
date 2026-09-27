@@ -14,6 +14,8 @@ from pathlib import Path
 _READ_LIMIT = 8000
 _EXCERPT = 400
 _FILE_CAP = 20
+_SKIP_DIRS = frozenset({".git", "__pycache__", "bundle", "evidence"})
+_SKIP_FILES = frozenset({"plan.json", "action-log.jsonl", "summary.md", "run.jsonl"})
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,9 @@ def snapshot_text_files(root: Path) -> dict[str, str]:
         if not path.is_file() or path.is_symlink():
             continue
         relative = path.relative_to(root).as_posix()
+        parts = relative.split("/")
+        if parts[0] in _SKIP_DIRS or (len(parts) == 1 and parts[0] in _SKIP_FILES):
+            continue
         try:
             found[relative] = path.read_bytes()[:_READ_LIMIT].decode("utf-8", errors="replace")
         except OSError:

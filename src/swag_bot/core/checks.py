@@ -282,7 +282,7 @@ class CheckRunner:
                 action,
                 approver,
                 ok=False,
-                detail=f"{check.id}: {path} could not be read: {exc}",
+                detail=f"{check.id}: {path} could not be read: {_read_failure(exc)}",
                 path=path,
             )
         ok = expected in text
@@ -387,7 +387,7 @@ class CheckRunner:
                 action,
                 approver,
                 ok=False,
-                detail=f"{check.id}: {path} could not be read: {exc}",
+                detail=f"{check.id}: {path} could not be read: {_read_failure(exc)}",
                 path=path,
             )
         try:
@@ -545,6 +545,15 @@ class CheckRunner:
                 evidence_id=evidence_id,
             )
         )
+
+
+def _read_failure(exc: BaseException) -> str:
+    """Stable check text. Exception messages include the absolute sandbox path."""
+    if isinstance(exc, FileNotFoundError):
+        return "file not found"
+    if isinstance(exc, OSError) and exc.strerror:
+        return exc.strerror
+    return type(exc).__name__
 
 
 def _read_action(check: Check, path: str) -> ActionRequest:

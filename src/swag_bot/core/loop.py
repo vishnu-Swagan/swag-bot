@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from swag_bot.core.bundle.context import current_attempt as bundle_attempt
+from swag_bot.core.bundle.context import current_step_id
 from swag_bot.core.engine import WorkflowEngine, build_engine
 from swag_bot.core.escalation import EscalationController
 from swag_bot.core.evidence import EvidenceLedger, current_attempt
@@ -212,7 +214,14 @@ class PlanDoVerifyLoop:
         self._emit_lock = threading.Lock()
         self._local = threading.local()
 
-    def run(self, goal: str, *, dry_run: bool = False, context: str = "") -> TaskPlan:
+    def run(
+        self,
+        goal: str,
+        *,
+        dry_run: bool = False,
+        context: str = "",
+        run_id: str | None = None,
+    ) -> TaskPlan:
         """Plan, do, and verify ``goal``. A dry run returns the plan unexecuted.
 
         ``context`` is extra planner text from the composition root: recalled
@@ -243,6 +252,8 @@ class PlanDoVerifyLoop:
             strict=self.strict_plan or (scaffold is not None and scaffold.strict_plan),
         )
         plan = planner.create(goal, max_steps=self.max_steps)
+        if run_id and run_id.strip():
+            plan.id = run_id.strip()
         self._plan = plan
         self.ledger.set_run(plan.id, plan.goal)
         if planner.fell_back:
@@ -316,9 +327,11 @@ class PlanDoVerifyLoop:
         self._local.step_id = step.id
         feedback: str | None = None
         before = snapshot_text_files(self.sandbox.workdir)
+        step_token = current_step_id.set(step.id)
         try:
             for attempt in range(1, self.max_attempts + 1):
                 token = current_attempt.set(attempt)
+                attempt_token = bundle_attempt.set(attempt)
                 try:
                     stop, feedback = self._gate_step(step, attempt, feedback)
                     if stop:
@@ -375,7 +388,9 @@ class PlanDoVerifyLoop:
                     self._rollback_step(step.id)
                 finally:
                     current_attempt.reset(token)
+                    bundle_attempt.reset(attempt_token)
         finally:
+            current_step_id.reset(step_token)
             self._local.step_id = None
 
     def _passed(self, verdict: Verdict) -> bool:

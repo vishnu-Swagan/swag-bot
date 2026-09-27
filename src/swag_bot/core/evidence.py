@@ -11,6 +11,7 @@ The shape is the Evidence Contract (``docs/spec/evidence-contract.md``).
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import threading
 from collections.abc import Sequence
@@ -74,6 +75,7 @@ class EvidenceLedger:
         self.goal = ""
         self._events: list[RunRecord] = []
         self._blobs: dict[str, str] = {}
+        self._ordinal = 0
         self._lock = threading.Lock()
 
     def set_run(self, run_id: str, goal: str) -> None:
@@ -115,6 +117,17 @@ class EvidenceLedger:
         ok = _tool_ok(cleaned, approved=approved, exit_code=exit_code, timed_out=timed_out)
         detail = _tool_detail(tool, cleaned, exit_code=exit_code, timed_out=timed_out, ok=ok)
         evidence = Evidence(
+            id=self._mint_id(
+                kind="tool",
+                step_id=step_id,
+                attempt=current_attempt.get(),
+                tool=tool,
+                path=path,
+                ok=ok,
+                exit_code=exit_code,
+                detail=detail,
+                content=sha256_text(content),
+            ),
             kind="tool",
             step_id=step_id,
             attempt=current_attempt.get(),
@@ -148,6 +161,18 @@ class EvidenceLedger:
     ) -> Evidence:
         """Store a check result or any other harness observation."""
         evidence = Evidence(
+            id=self._mint_id(
+                kind=kind,
+                step_id=step_id,
+                attempt=current_attempt.get(),
+                tool=tool,
+                path=path,
+                ok=ok,
+                exit_code=exit_code,
+                detail=detail,
+                summary=summary,
+                content=sha256_text(content),
+            ),
             kind=kind,
             step_id=step_id,
             attempt=current_attempt.get(),
@@ -166,6 +191,19 @@ class EvidenceLedger:
     def add_action(self, entry: ActionLogEntry) -> None:
         """Copy one action row into the per-run log."""
         self._append(RunRecord(record="action", action=entry))
+
+    def _mint_id(self, **basis: Any) -> str:
+        """``ev-`` plus 12 hex characters from the event, not a random id.
+
+        The same sequence of tool and check results gets the same ids, so a
+        recorded replay asks the model the same question the original run did.
+        Duration and wall-clock time stay out of the hash.
+        """
+        with self._lock:
+            self._ordinal += 1
+            ordinal = self._ordinal
+        payload = json.dumps({"n": ordinal, **basis}, sort_keys=True, default=str)
+        return "ev-" + sha256_text(payload)[:12]
 
     def add_check_result(self, result: CheckResult) -> None:
         """Copy one check result into the per-run log."""

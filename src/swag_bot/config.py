@@ -55,6 +55,9 @@ Example ``config.toml``::
     jury_size = 3
     judges = []
 
+    [bundle]
+    record = false
+
 Known ``model.provider`` values: ``ollama`` (default), ``litellm``,
 ``openai``, ``anthropic``. The string is open so a new provider does not
 require a schema change. ``memory.backend`` defaults to ``memory``, which
@@ -297,6 +300,14 @@ class EscalationSettings(BaseModel):
         return value
 
 
+class BundleSettings(BaseModel):
+    """Run bundles. ``record`` saves a portable bundle for every ``swag run``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    record: bool = False
+
+
 class Settings(BaseModel):
     """Top-level ``config.toml``. Unknown keys are ignored so new fields can land later."""
 
@@ -311,6 +322,7 @@ class Settings(BaseModel):
     undo: UndoSettings = Field(default_factory=UndoSettings)
     taint: TaintSettings = Field(default_factory=TaintSettings)
     escalation: EscalationSettings = Field(default_factory=EscalationSettings)
+    bundle: BundleSettings = Field(default_factory=BundleSettings)
 
 
 def swag_home() -> Path:
