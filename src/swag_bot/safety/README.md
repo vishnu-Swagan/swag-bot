@@ -23,4 +23,4 @@ The narrow exception is the `serve-mcp` wrapper in `src/swag_bot/cli.py`: update
 
 ## Status
 
-Implemented. See `docs/SAFETY.md`.
+Implemented. See `docs/SAFETY.md`. The taint firewall lives in `taint.py` and `quarantine.py`; the threat model is `docs/TAINT.md`.

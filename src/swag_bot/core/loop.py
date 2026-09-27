@@ -34,6 +34,7 @@ from swag_bot.interfaces import (
     Step,
     StepResult,
     StepStatus,
+    TaintTracker,
     TaskPlan,
     Tool,
     ToolRegistry,
@@ -120,6 +121,7 @@ class PlanDoVerifyLoop:
         evidence_dir: Path | None = None,
         evidence_enabled: bool = True,
         undo: UndoController | None = None,
+        taint: TaintTracker | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
@@ -144,6 +146,7 @@ class PlanDoVerifyLoop:
         self.evidence_enabled = evidence_enabled
         self.ledger = EvidenceLedger(directory=evidence_dir)
         self.undo = undo
+        self.taint = taint
         if tools is None:
             tools = InMemoryToolRegistry()
         register_builtin_tools(tools, sandbox)
@@ -218,6 +221,7 @@ class PlanDoVerifyLoop:
             on_tool=self._on_tool,
             memory_mode=self.memory_mode,
             ledger=self.ledger,
+            taint=self.taint,
         )
         verifier = Verifier(
             self._llm,

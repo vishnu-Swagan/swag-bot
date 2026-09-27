@@ -30,6 +30,13 @@ Example ``config.toml``::
     enabled = true
     auto_rollback = true
 
+    [taint]
+    enabled = true
+    mode = "escalate"
+    reader = "mark"
+    workspace = "trusted"
+    memory = "trusted"
+
 Known ``model.provider`` values: ``ollama`` (default), ``litellm``,
 ``openai``, ``anthropic``. The string is open so a new provider does not
 require a schema change. ``memory.backend`` defaults to ``memory``, which
@@ -49,7 +56,7 @@ import tomli_w
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from swag_bot.errors import ConfigError
-from swag_bot.interfaces import AutonomyLevel
+from swag_bot.interfaces import AutonomyLevel, TrustLevel
 
 
 class SandboxMode(StrEnum):
@@ -129,6 +136,44 @@ class UndoSettings(BaseModel):
     auto_rollback: bool = True
 
 
+class TaintMode(StrEnum):
+    """What to do when untrusted data would drive a sensitive action.
+
+    ``escalate`` asks the user and shows the tainted source. ``block`` denies
+    with no prompt. ``off`` does not label or enforce. ``auto`` autonomy has
+    nobody to ask, so an escalated sink is denied instead of run.
+    """
+
+    OFF = "off"
+    ESCALATE = "escalate"
+    BLOCK = "block"
+
+
+class TaintReader(StrEnum):
+    """How untrusted tool output is shown to the model.
+
+    ``mark`` keeps the text inside quarantine markers. ``strip`` drops
+    instruction-shaped lines from that view. ``llm`` asks a tool-free reader
+    for a JSON extract. The firewall still tracks the raw text either way.
+    """
+
+    MARK = "mark"
+    STRIP = "strip"
+    LLM = "llm"
+
+
+class TaintSettings(BaseModel):
+    """Taint firewall. See ``docs/TAINT.md`` for the threat model and limits."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = True
+    mode: TaintMode = TaintMode.ESCALATE
+    reader: TaintReader = TaintReader.MARK
+    workspace: TrustLevel = TrustLevel.TRUSTED
+    memory: TrustLevel = TrustLevel.TRUSTED
+
+
 class Settings(BaseModel):
     """Top-level ``config.toml``. Unknown keys are ignored so new fields can land later."""
 
@@ -141,6 +186,7 @@ class Settings(BaseModel):
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     evidence: EvidenceSettings = Field(default_factory=EvidenceSettings)
     undo: UndoSettings = Field(default_factory=UndoSettings)
+    taint: TaintSettings = Field(default_factory=TaintSettings)
 
 
 def swag_home() -> Path:

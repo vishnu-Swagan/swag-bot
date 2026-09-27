@@ -9,7 +9,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.table import Table
 
-from swag_bot.interfaces import ActionRequest, Reversibility
+from swag_bot.interfaces import SWAG_TAINT_KEY, ActionRequest, Reversibility
 from swag_bot.safety.reversibility import classify_reversibility
 
 
@@ -62,10 +62,25 @@ def _panel(action: ActionRequest) -> Panel:
     plugin = action.arguments.get("plugin")
     if isinstance(plugin, str) and plugin:
         table.add_row("plugin", plugin)
-    border = "red" if _reversibility_of(action) is Reversibility.IRREVERSIBLE else "yellow"
+    stamp = action.arguments.get(SWAG_TAINT_KEY)
+    tainted = isinstance(stamp, dict) and stamp.get("tainted") is True
+    if tainted and isinstance(stamp, dict):
+        sources = stamp.get("sources")
+        if isinstance(sources, list) and sources:
+            table.add_row("taint", ", ".join(str(item) for item in sources))
+        sinks = stamp.get("sinks")
+        if isinstance(sinks, list) and sinks:
+            table.add_row("sink", ", ".join(str(item) for item in sinks))
+        reason = stamp.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            table.add_row("why", reason)
+    irreversible = _reversibility_of(action) is Reversibility.IRREVERSIBLE
+    border = "red" if irreversible or tainted else "yellow"
     title = "Approval required"
-    if _reversibility_of(action) is Reversibility.IRREVERSIBLE:
+    if irreversible:
         title = "Approval required — point of no return"
+    elif tainted:
+        title = "Approval required — untrusted data"
     return Panel(table, title=title, border_style=border)
 
 

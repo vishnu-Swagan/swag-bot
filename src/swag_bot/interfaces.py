@@ -617,6 +617,64 @@ class ActionRequest(BaseModel):
     tool_name: str | None = None
 
 
+# Key on ``ActionRequest.arguments`` written by a ``TaintTracker``. Tool
+# arguments that use the same name are stripped before the policy reads it.
+SWAG_TAINT_KEY = "_swag_taint"
+
+
+class TrustLevel(StrEnum):
+    """Whether a span of data may choose a sensitive action by itself.
+
+    ``trusted`` is the user goal and other data the user marked trusted.
+    ``untrusted`` is data the agent read from outside that trust boundary
+    (web pages, MCP results, plugin output, files outside the workspace).
+    """
+
+    TRUSTED = "trusted"
+    UNTRUSTED = "untrusted"
+
+
+@runtime_checkable
+class TaintTracker(Protocol):
+    """Labels data by source and trust, and quarantines untrusted tool output.
+
+    This is span- and argument-level tracking, not a proof of information
+    flow. ``prepare`` may raise ``action.risk`` and attach a ``_swag_taint``
+    stamp. It must not lower a ``destructive`` risk. ``label_output`` returns
+    the text the model is allowed to see. ``observe_result`` records a result
+    the caller will return raw (the executor quarantines it later).
+    """
+
+    def note(self, text: str, *, source: str, trust: TrustLevel) -> None:
+        """Record text that entered the agent, such as the user goal."""
+        ...
+
+    def register_tool(self, name: str, meta: Mapping[str, Any]) -> None:
+        """Record MCP ``_meta.swag`` (risk, sinks, source).
+
+        Metadata may raise risk or name a source. It must not be able to mark
+        MCP or web output as trusted.
+        """
+        ...
+
+    def prepare(self, action: ActionRequest, *, tool: str) -> ActionRequest:
+        """Stamp ``action`` before the permission policy sees it."""
+        ...
+
+    def label_output(self, tool: str, arguments: Mapping[str, Any], output: str) -> str:
+        """Record tool output and return the model-facing text."""
+        ...
+
+    def observe_result(
+        self,
+        tool: str,
+        output: str,
+        meta: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Record a tool result without changing the text returned to the caller."""
+        ...
+
+
 def default_requires_approval(
     autonomy: AutonomyLevel,
     risk: RiskLevel,
@@ -1227,11 +1285,14 @@ __all__ = [
     "Step",
     "StepResult",
     "StepStatus",
+    "SWAG_TAINT_KEY",
     "StreamingLLMClient",
     "TaskPlan",
+    "TaintTracker",
     "Tool",
     "ToolCall",
     "ToolRegistry",
+    "TrustLevel",
     "UndoController",
     "UndoResult",
     "UserConfigOption",

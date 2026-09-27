@@ -89,6 +89,20 @@ def show_policy() -> None:
     console.print("- unknown permission names")
     console.print("A destructive risk is never lowered.")
     console.print("Writes outside the workdir are destructive.")
+    taint = settings.taint
+    firewall = "on" if taint.enabled and taint.mode.value != "off" else "off"
+    console.print("")
+    console.print(
+        f"taint firewall: {firewall} "
+        f"(mode={taint.mode.value}, reader={taint.reader.value}, "
+        f"workspace={taint.workspace.value}, memory={taint.memory.value})"
+    )
+    console.print(
+        "Untrusted data (web pages, MCP results, plugin output, files outside the "
+        "workspace) cannot by itself drive network, destructive, credential, or send "
+        "actions. escalate asks and shows the source; block denies; auto denies "
+        "because it cannot ask. See docs/TAINT.md."
+    )
     console.print("")
     table = Table(title=f"prompts at {autonomy.value}", show_header=True, header_style="bold")
     table.add_column("risk")

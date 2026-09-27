@@ -22,10 +22,12 @@ from swag_bot.interfaces import (
     MCPServerSpec,
     PermissionPolicy,
     RiskLevel,
+    TaintTracker,
     Tool,
     default_requires_approval,
 )
 from swag_bot.mcp.config import effective_transport, load_mcp_servers, resolve_server_spec
+from swag_bot.mcp.meta import swag_meta
 
 _SECRET_KEY = re.compile(
     r"(?i)(api[_-]?key|token|secret|password|passwd|authorization|credential)"
@@ -80,6 +82,7 @@ class SwagMCPClient:
         prompter: ApprovalPrompter | None = None,
         recorder: ActionRecorder | None = None,
         opener: SessionOpener | None = None,
+        taint: TaintTracker | None = None,
     ) -> None:
         self._servers = list(servers)
         self._by_name = {spec.name: spec for spec in self._servers}
@@ -87,6 +90,7 @@ class SwagMCPClient:
         self._prompter = prompter
         self._recorder = recorder
         self._opener = opener or _open_session
+        self._taint = taint
         self._closed = False
         self._tools: list[Tool] = []
         self._index: dict[str, tuple[str, str]] = {}
@@ -134,12 +138,14 @@ class SwagMCPClient:
                 "arguments": _scrub(dict(arguments)),
             },
         )
+        if self._taint is not None:
+            action = self._taint.prepare(action, tool=name)
         if authorized:
             self._reject_if_denied(action)
         else:
             self._authorize(action)
         self._ensure_sdk()
-        text: str = _run_sync(self._call_async, spec, tool_name, dict(arguments))
+        text: str = _run_sync(self._call_async, spec, tool_name, dict(arguments), name)
         return text
 
     def close(self) -> None:
@@ -152,6 +158,7 @@ class SwagMCPClient:
         tools: list[Tool] = []
         qualified: dict[str, tuple[str, str]] = {}
         raw_owners: dict[str, list[tuple[str, str]]] = {}
+        metas: dict[str, dict[str, Any]] = {}
         for spec in self._servers:
             async with self._opener(spec) as session:
                 listed = await session.list_tools()
@@ -166,19 +173,34 @@ class SwagMCPClient:
                     tools.append(tool)
                     qualified[public] = (spec.name, mcp_tool.name)
                     raw_owners.setdefault(mcp_tool.name, []).append((spec.name, mcp_tool.name))
+                    meta = swag_meta(mcp_tool)
+                    if meta:
+                        metas[public] = meta
+                        if self._taint is not None:
+                            self._taint.register_tool(public, meta)
         for raw_name, owners in raw_owners.items():
             if len(owners) == 1 and raw_name not in qualified:
                 qualified[raw_name] = owners[0]
+                alias_meta = metas.get(f"{owners[0][0]}__{raw_name}")
+                if self._taint is not None and alias_meta:
+                    self._taint.register_tool(raw_name, alias_meta)
         self._tools = tools
         self._index = qualified
         return list(tools)
 
     async def _call_async(
-        self, spec: MCPServerSpec, tool_name: str, arguments: dict[str, Any]
+        self,
+        spec: MCPServerSpec,
+        tool_name: str,
+        arguments: dict[str, Any],
+        public_name: str,
     ) -> str:
         async with self._opener(spec) as session:
             result = await session.call_tool(tool_name, arguments)
-        return _result_text(result)
+        text = _result_text(result)
+        if self._taint is not None:
+            self._taint.observe_result(public_name, text, swag_meta(result) or None)
+        return text
 
     def _reject_if_denied(self, action: ActionRequest) -> None:
         """Enforce a hard deny after another layer already asked the user."""
@@ -234,6 +256,7 @@ def build_client(
     recorder: ActionRecorder | None = None,
     opener: SessionOpener | None = None,
     servers: list[MCPServerSpec] | None = None,
+    taint: TaintTracker | None = None,
 ) -> SwagMCPClient:
     """Client for ``~/.swag/mcp.json``, or for ``servers`` when that is passed."""
     chosen = list(load_mcp_servers().values()) if servers is None else servers
@@ -244,6 +267,7 @@ def build_client(
         prompter=prompter,
         recorder=recorder,
         opener=opener,
+        taint=taint,
     )
 
 

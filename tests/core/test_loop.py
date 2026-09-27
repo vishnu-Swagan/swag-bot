@@ -512,7 +512,10 @@ def test_secrets_are_redacted_in_the_action_log(tmp_path: Path) -> None:
     assert seen == ["super-secret-value"]
     logged = json.dumps(loop.action_log[0].model_dump(mode="json"))
     assert "super-secret-value" not in logged
-    assert "abc" not in logged
+    # The entry id is random and can contain the letters "abc", so check the
+    # fields that actually stored the secret.
+    assert "abc" not in (loop.action_log[0].outcome or "")
+    assert "abc" not in json.dumps(loop.action_log[0].action.arguments)
     assert loop.action_log[0].action.arguments["api_key"] == "[redacted]"
 
 
