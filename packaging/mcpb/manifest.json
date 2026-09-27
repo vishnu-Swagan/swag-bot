@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "swag-bot",
   "display_name": "Swag Bot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Run a Swag Bot task from Claude Desktop.",
   "author": {
     "name": "Vishnu M",

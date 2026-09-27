@@ -98,8 +98,8 @@ def test_size_timeout_and_scaffold_choice() -> None:
     assert parameter_billions("qwen2.5:0.5b") == 0.5
     assert parameter_billions("mixtral:8x7b") == 56
     assert parameter_billions("llama3.2") == 3
-    assert request_timeout_seconds("ollama", "qwen2.5:3b", None) == 300
-    assert request_timeout_seconds("ollama", "qwen2.5:7b", None) == 600
+    assert request_timeout_seconds("ollama", "qwen2.5:3b", None) == 120
+    assert request_timeout_seconds("ollama", "qwen2.5:7b", None) == 180
     assert request_timeout_seconds("ollama", "qwen2.5:7b", 90) == 90
     assert request_timeout_seconds("openai", "gpt-4o-mini", None) is None
     assert estimate_cost_usd("ollama") == 0
@@ -194,7 +194,10 @@ def test_strict_planner_collapses_a_one_file_goal_to_one_step() -> None:
             {
                 "id": "fib",
                 "title": "Write and run fib.py",
-                "instruction": "Write fib.py so it prints the 10th Fibonacci number, then run it.",
+                "instruction": (
+                    "Write fib.py so it prints the 10th Fibonacci number, "
+                    "then run it and check the output."
+                ),
             }
         ]
     )
@@ -223,7 +226,10 @@ def test_strict_planner_rejects_a_step_that_never_says_to_write() -> None:
             {
                 "id": "fib",
                 "title": "Write and run fib.py",
-                "instruction": "Write fib.py so it prints the 10th Fibonacci number, then run it.",
+                "instruction": (
+                    "Write fib.py so it prints the 10th Fibonacci number, "
+                    "then run it and check the output."
+                ),
             }
         ]
     )
@@ -537,7 +543,7 @@ def test_failing_step_escalates_to_the_stronger_model(tmp_path: Path) -> None:
     plan = loop.run("Write fib.py that prints 55 and run it.")
     assert plan.steps[0].status.value == "done"
     assert sandbox.read_file("fib.py") == "print(55)\n"
-    assert "python fib.py" in sandbox.commands
+    assert any(command.endswith("fib.py") for command in sandbox.commands)
     assert "escalate" in events
     assert budget.used_escalations == 1
     assert fallback.models[0] == "qwen2.5:7b"

@@ -125,9 +125,10 @@ def setup_command(
     except (ConfigError, SwagError, OSError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
-    typer.echo(result.message)
-    if json_output or result.exit_code == 0:
+    if json_output:
         typer.echo(json.dumps(doctor_report(), indent=2, sort_keys=True))
+    elif result.message:
+        typer.echo(result.message)
     if result.exit_code:
         raise typer.Exit(code=result.exit_code)
 

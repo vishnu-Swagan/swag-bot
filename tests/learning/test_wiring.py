@@ -79,7 +79,7 @@ def test_same_task_replay_matches_and_promotion_waits_for_both(
         concurrency=1,
     )
     assert result.exit_code == 0, result.summary
-    plan = json.loads((out / "plan.json").read_text(encoding="utf-8"))
+    plan = json.loads((out / ".swag" / "plan.json").read_text(encoding="utf-8"))
     run_id = plan["id"]
     home = swag_home()
     index = json.loads((home / "bundles" / f"{run_id}.json").read_text(encoding="utf-8"))
@@ -253,11 +253,11 @@ def test_failing_check_is_marked_failed_and_handoff_cites_evidence(tmp_path: Pat
         concurrency=1,
     )
     assert result.exit_code == 1
-    plan = json.loads((out / "plan.json").read_text(encoding="utf-8"))
+    plan = json.loads((out / ".swag" / "plan.json").read_text(encoding="utf-8"))
     statuses = {step["id"]: step["status"] for step in plan["steps"]}
     assert statuses["write"] == "done"
     assert statuses["prove"] == "failed"
-    ledger = (out / "run.jsonl").read_text(encoding="utf-8")
+    ledger = (out / ".swag" / "run.jsonl").read_text(encoding="utf-8")
     assert '"passed":false' in ledger or '"passed": false' in ledger
     prompts = "\n".join(
         message.content or "" for turn in llm.messages for message in turn

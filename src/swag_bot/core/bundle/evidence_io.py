@@ -1,9 +1,10 @@
 """Include a per-run evidence ledger in the bundle.
 
-When ``<output-dir>/run.jsonl`` exists, it is copied verbatim. That is the
-file written by the evidence ledger (``docs/spec/evidence-contract.md``).
-When it does not exist yet, the bundle writes a compatible ``run.jsonl``
-from the tool calls and actions this recorder saw.
+When ``<output-dir>/.swag/run.jsonl`` exists, it is copied verbatim. That is
+the file written by the evidence ledger (``docs/spec/evidence-contract.md``).
+An older run that wrote ``<output-dir>/run.jsonl`` is still accepted. When
+neither file exists yet, the bundle writes a compatible ``run.jsonl`` from
+the tool calls and actions this recorder saw.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ def include_evidence(
     """Write ``evidence/run.jsonl``. Return ``run.jsonl`` or ``synthesized``."""
     evidence_dir = destination / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
-    source = None if output_dir is None else output_dir / "run.jsonl"
+    source = None if output_dir is None else _ledger_source(output_dir)
     target = evidence_dir / "run.jsonl"
     if source is not None and source.is_file() and source.resolve() != target.resolve():
         copy_redacted_ledger(source, target)
@@ -44,6 +45,17 @@ def include_evidence(
     lines = _synthesize(evidence_dir, run_id=run_id, goal=goal, tools=tools, actions=actions)
     target.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
     return "synthesized"
+
+
+def _ledger_source(output_dir: Path) -> Path | None:
+    """Prefer ``.swag/run.jsonl``. Fall back to a top-level ledger from older runs."""
+    modern = output_dir / ".swag" / "run.jsonl"
+    if modern.is_file():
+        return modern
+    legacy = output_dir / "run.jsonl"
+    if legacy.is_file():
+        return legacy
+    return None
 
 
 def copy_redacted_ledger(source: Path, target: Path) -> None:

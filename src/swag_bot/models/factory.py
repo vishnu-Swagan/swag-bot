@@ -31,14 +31,45 @@ def get_llm_client(config: Settings | None = None, *, timeout: float | None = No
     model = settings.model.model
     api_base = settings.model.api_base
     chosen = timeout if timeout is not None else settings.model.timeout
+    temperature = settings.model.temperature
+    num_ctx = settings.model.num_ctx
+    num_predict = settings.model.num_predict
     if provider == OLLAMA:
         if chosen is None:
-            return OllamaClient(model=model, base_url=api_base)
-        return OllamaClient(model=model, base_url=api_base, timeout=chosen)
+            return OllamaClient(
+                model=model,
+                base_url=api_base,
+                temperature=temperature,
+                num_ctx=num_ctx,
+                num_predict=num_predict,
+            )
+        return OllamaClient(
+            model=model,
+            base_url=api_base,
+            timeout=chosen,
+            temperature=temperature,
+            num_ctx=num_ctx,
+            num_predict=num_predict,
+        )
     if provider in LITELLM_PROVIDERS:
         if chosen is None:
-            return LiteLLMClient(provider=provider, model=model, api_base=api_base)
-        return LiteLLMClient(provider=provider, model=model, api_base=api_base, timeout=chosen)
+            return LiteLLMClient(
+                provider=provider,
+                model=model,
+                api_base=api_base,
+                temperature=temperature,
+                num_ctx=num_ctx,
+                num_predict=num_predict,
+            )
+        return LiteLLMClient(
+            provider=provider,
+            model=model,
+            api_base=api_base,
+            timeout=chosen,
+            temperature=temperature,
+            num_ctx=num_ctx,
+            num_predict=num_predict,
+        )
     known = ", ".join(sorted(KNOWN_PROVIDERS))
     raise ConfigError(f"unknown model provider {provider!r}. Known providers: {known}")
 

@@ -14,12 +14,28 @@ from swag_bot.onboarding.clients import claude_mcp_add_command, cursor_install_l
 runner = CliRunner()
 
 
-def test_setup_dry_run_does_not_write_config(_isolated_swag_home: Path) -> None:
+def test_setup_dry_run_does_not_write_config(
+    _isolated_swag_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from swag_bot.onboarding.detect import EnvironmentSnapshot
+
+    monkeypatch.setattr(
+        "swag_bot.onboarding.setup.capture_environment",
+        lambda: EnvironmentSnapshot(
+            keys={},
+            google_api_key_set=False,
+            ollama_installed=False,
+            ollama_models=None,
+            mem_bytes=None,
+        ),
+    )
     result = runner.invoke(app, ["setup", "--auto", "--dry-run"])
     text = result.output
     assert result.exit_code == 0, text
     assert "Dry run." in text
     assert "https://ollama.com/download" in text
+    assert not text.lstrip().startswith("{")
+    assert text.count("Dry run.") == 1
     assert not (_isolated_swag_home / "config.toml").is_file()
 
 

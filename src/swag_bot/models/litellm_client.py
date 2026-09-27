@@ -62,11 +62,17 @@ class LiteLLMClient:
         api_base: str | None = None,
         timeout: float = 120.0,
         completion_fn: CompletionFn | None = None,
+        temperature: float = 0.2,
+        num_ctx: int | None = None,
+        num_predict: int | None = 4096,
     ) -> None:
         self.provider = provider.strip().lower()
         self.model = model
         self.api_base = api_base
         self.timeout = timeout
+        self.temperature = temperature
+        self.num_ctx = num_ctx
+        self.num_predict = num_predict
         self._completion_fn = completion_fn
 
     def __repr__(self) -> str:
@@ -225,6 +231,7 @@ class LiteLLMClient:
         response_format: Mapping[str, Any] | None = None,
         response_schema: Mapping[str, Any] | None = None,
         _allow_format_retry: bool = True,
+        _allow_timeout_retry: bool = True,
     ) -> Any:
         fn = self._completion_fn or _load_litellm_completion()
         kwargs: dict[str, Any] = {
@@ -232,7 +239,12 @@ class LiteLLMClient:
             "messages": [_openai_message(message) for message in messages],
             "stream": stream,
             "timeout": self.timeout,
+            "temperature": self.temperature,
         }
+        if self.num_predict is not None:
+            kwargs["max_tokens"] = self.num_predict
+        if self.num_ctx is not None and _sends_num_ctx(self.provider, self.litellm_model(model)):
+            kwargs["num_ctx"] = self.num_ctx
         if tools:
             kwargs["tools"] = tools_as_openai(tools)
             kwargs["tool_choice"] = "auto"
@@ -262,6 +274,17 @@ class LiteLLMClient:
             raise
         except Exception as exc:
             message = redact_secrets(str(exc))
+            if _allow_timeout_retry and not stream and _is_timeout_message(message):
+                return self._invoke(
+                    messages,
+                    tools,
+                    model,
+                    stream=stream,
+                    response_format=response_format,
+                    response_schema=response_schema,
+                    _allow_format_retry=_allow_format_retry,
+                    _allow_timeout_retry=False,
+                )
             if (
                 response_format is not None
                 and _allow_format_retry
@@ -399,6 +422,18 @@ def _field(value: Any, name: str) -> Any:
     if isinstance(value, dict):
         return value.get(name)
     return getattr(value, name, None)
+
+
+def _is_timeout_message(message: str) -> bool:
+    text = message.lower()
+    return "timed out" in text or "timeout" in text
+
+
+def _sends_num_ctx(provider: str, model: str) -> bool:
+    """``num_ctx`` is an Ollama option. Other providers reject it."""
+    if provider == "ollama":
+        return True
+    return model.startswith("ollama/")
 
 
 def _format_unsupported(message: str) -> bool:

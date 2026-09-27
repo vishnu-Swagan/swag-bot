@@ -30,8 +30,9 @@ _USD_PER_CALL = {
 }
 
 # Big local models on CPU regularly outlive the client's historical 120s cap.
-_SMALL_LOCAL_TIMEOUT = 300.0
-_LARGE_LOCAL_TIMEOUT = 600.0
+# A timed-out request is retried once, so these stay well under a 10 minute hang.
+_SMALL_LOCAL_TIMEOUT = 120.0
+_LARGE_LOCAL_TIMEOUT = 180.0
 
 
 def parameter_billions(model: str) -> float | None:
@@ -49,9 +50,9 @@ def request_timeout_seconds(provider: str, model: str, configured: float | None)
     """Timeout to use while the harness is on.
 
     An explicit ``model.timeout`` always wins. Otherwise local models get
-    longer than the 120 second client default: 300 seconds under 7B, and
-    600 seconds at 7B and above, where CPU inference often exceeds 120 seconds.
-    Cloud providers keep the client default.
+    120 seconds under 7B and 180 seconds at 7B and above. A request that
+    times out is retried once by the client. Cloud providers keep the
+    client default.
     """
     if configured is not None:
         return configured

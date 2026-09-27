@@ -45,6 +45,10 @@ if ($PypiPublished -eq 1) {
   $Spec = "swag-bot[mcp,models] @ $GitInstallUrl"
 }
 
+if ($env:SWAG_REF -and $Spec -like "*git+*") {
+  $Spec = "$Spec@$($env:SWAG_REF)"
+}
+
 function Invoke-Step([string[]]$Command) {
   if ($DryRun) {
     Write-Output ("would run: " + ($Command -join " "))
@@ -80,14 +84,32 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 
 Write-Output "Model choices (local and free cloud): https://github.com/vishnu-Swagan/swag-bot/blob/main/docs/MODELS.md"
 
-Invoke-Step @("uv", "tool", "install", $Spec)
+Invoke-Step @("uv", "tool", "install", "--quiet", $Spec)
+
+$BinDir = Join-Path $env:USERPROFILE ".local\bin"
+if (-not $DryRun) {
+  try {
+    $discovered = (& uv tool dir --bin 2>$null)
+    if ($discovered) { $BinDir = "$discovered".Trim() }
+  } catch {}
+  try { & uv tool update-shell | Out-Null } catch {}
+}
+$env:PATH = "$BinDir;$env:PATH"
+Write-Output "If swag is not on PATH, add its directory and open a new shell:"
+Write-Output "  `$env:PATH = `"$BinDir;`$env:PATH`""
+Write-Output "Or run: uv tool update-shell"
+
+$SwagBin = Join-Path $BinDir "swag.exe"
+if (-not (Test-Path $SwagBin)) {
+  $SwagBin = Join-Path $BinDir "swag"
+}
 
 if ($AssumeYes) {
-  Invoke-Step @("swag", "setup", "--auto", "--yes")
+  Invoke-Step @($SwagBin, "setup", "--auto", "--yes")
 } else {
-  Invoke-Step @("swag", "setup", "--auto")
+  Invoke-Step @($SwagBin, "setup", "--auto")
 }
 
 if ($SwagArgs.Count -gt 0) {
-  Invoke-Step (@("swag") + $SwagArgs)
+  Invoke-Step (@($SwagBin) + $SwagArgs)
 }

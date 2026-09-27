@@ -183,11 +183,13 @@ copy.
 | `frontier` | About 30B or a known frontier name, and a passing probe | JSON schema, and up to 8 tool rounds |
 | `off` | Set `model.harness` | No probe, no scaffold, client timeout stays 120 seconds unless `model.timeout` is set |
 
-Ollama's client timeout is 120 seconds, which is short for a 7B or larger
-model on CPU. While the harness is on and `model.timeout` is unset, local
-models use 300 seconds under 7B and 600 seconds at 7B and above. The probe
-itself gives up after 20 seconds so a stuck model does not block the run,
-and a timeout is not cached as a failed profile.
+Ollama requests send `options.temperature` (default 0.2), `options.num_predict`
+(default 4096), and `options.num_ctx` from `model.num_ctx` or the probed
+context window. A request that times out is retried once. While the harness
+is on and `model.timeout` is unset, local models use 120 seconds under 7B
+and 180 seconds at 7B and above. The probe itself gives up after 20 seconds
+so a stuck model does not block the run, and a timeout is not cached as a
+failed profile.
 
 Optional escalation, after the active model has used its attempts:
 

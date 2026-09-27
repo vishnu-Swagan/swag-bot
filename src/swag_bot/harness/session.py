@@ -134,6 +134,7 @@ def prepare_harness(settings: Settings, llm: LLMClient) -> PreparedHarness:
         settings.model.timeout,
     )
     llm = _apply_timeout(llm, timeout)
+    _apply_generation(llm, settings, report)
     escalation, warning = _escalation(settings)
     note = _note(
         chosen,
@@ -191,6 +192,22 @@ def _apply_timeout(llm: LLMClient, timeout: float | None) -> LLMClient:
 
 def _has_timeout(llm: LLMClient) -> bool:
     return isinstance(llm, (OllamaClient, LiteLLMClient))
+
+
+def _apply_generation(
+    llm: LLMClient,
+    settings: Settings,
+    report: CapabilityReport | None,
+) -> None:
+    """Send the probed context window when ``model.num_ctx`` was not set."""
+    if not isinstance(llm, (OllamaClient, LiteLLMClient)):
+        return
+    llm.temperature = settings.model.temperature
+    llm.num_predict = settings.model.num_predict
+    if settings.model.num_ctx is not None:
+        llm.num_ctx = settings.model.num_ctx
+    elif report is not None and report.context_tokens:
+        llm.num_ctx = int(report.context_tokens)
 
 
 def _escalation(settings: Settings) -> tuple[StepEscalation | None, str]:

@@ -39,3 +39,23 @@ def test_dry_run_prints_uv_and_setup_without_running_them(tmp_path: Path) -> Non
         check=False,
     )
     assert syntax.returncode == 0, syntax.stderr
+
+
+def test_swag_ref_is_appended_to_the_git_url(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["PATH"] = "/usr/bin:/bin"
+    env["HOME"] = str(tmp_path)
+    env["SWAG_REF"] = "v0.2.0"
+    result = subprocess.run(
+        ["sh", "scripts/install.sh", "--dry-run", "--", "run", "hello"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "git+https://github.com/vishnu-Swagan/swag-bot@v0.2.0" in result.stdout
+    assert "export PATH=" in result.stdout
+    assert "uv tool update-shell" in result.stdout

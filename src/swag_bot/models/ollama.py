@@ -45,10 +45,16 @@ class OllamaClient:
         base_url: str | None = None,
         timeout: float = 120.0,
         transport: HTTPTransport | None = None,
+        temperature: float = 0.2,
+        num_ctx: int | None = None,
+        num_predict: int | None = 4096,
     ) -> None:
         self.model = model
         self.base_url = _normalize_base(base_url)
         self.timeout = timeout
+        self.temperature = temperature
+        self.num_ctx = num_ctx
+        self.num_predict = num_predict
         self._transport = transport if transport is not None else UrllibTransport()
 
     def chat(
@@ -222,14 +228,9 @@ class OllamaClient:
             stream=False,
             response_format=response_format,
             response_schema=response_schema,
+            options=self._options(),
         )
-        response = self._transport.request(
-            "POST",
-            f"{self.base_url}/api/chat",
-            _dump(payload),
-            _JSON_HEADERS,
-            self.timeout,
-        )
+        response = self._request(payload, retry=True)
         if response.status >= 400:
             detail = redact_secrets(response.text())
             if native_tools and _tools_unsupported(response.status, detail):
@@ -268,6 +269,7 @@ class OllamaClient:
             model=model,
             tools=tools if native_tools else None,
             stream=True,
+            options=self._options(),
         )
         try:
             lines = self._transport.stream(
@@ -302,6 +304,30 @@ class OllamaClient:
                 raise ToolCallingUnsupported(str(exc)) from exc
             raise
 
+    def _options(self) -> dict[str, Any]:
+        """Ollama generation options. Empty values are omitted."""
+        options: dict[str, Any] = {"temperature": self.temperature}
+        if self.num_predict is not None:
+            options["num_predict"] = self.num_predict
+        if self.num_ctx is not None:
+            options["num_ctx"] = self.num_ctx
+        return options
+
+    def _request(self, payload: dict[str, Any], *, retry: bool) -> Any:
+        """POST ``/api/chat``. A timeout is tried once more, then raised."""
+        try:
+            return self._transport.request(
+                "POST",
+                f"{self.base_url}/api/chat",
+                _dump(payload),
+                _JSON_HEADERS,
+                self.timeout,
+            )
+        except ModelError as exc:
+            if retry and _is_timeout(exc):
+                return self._request(payload, retry=False)
+            raise
+
 
 def resolve_ollama_base_url(api_base: str | None = None) -> str:
     """Ollama root URL. ``api_base`` wins, then ``OLLAMA_HOST``, then localhost."""
@@ -319,6 +345,11 @@ def _dump(payload: dict[str, Any]) -> bytes:
     return json.dumps(payload).encode("utf-8")
 
 
+def _is_timeout(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return "timed out" in text or "timeout" in text
+
+
 def _chat_payload(
     messages: Sequence[Message],
     *,
@@ -327,12 +358,15 @@ def _chat_payload(
     stream: bool,
     response_format: Mapping[str, Any] | None = None,
     response_schema: Mapping[str, Any] | None = None,
+    options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model,
         "messages": [_ollama_message(message) for message in messages],
         "stream": stream,
     }
+    if options:
+        payload["options"] = dict(options)
     if tools:
         payload["tools"] = tools_as_openai(tools)
     formatted = _ollama_format(response_format)

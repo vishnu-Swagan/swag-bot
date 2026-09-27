@@ -87,13 +87,21 @@ class TaskListView:
             live.update(render_table(plan), refresh=True)
 
     def note(self, text: str) -> None:
-        """Print one durable line. Markup is off so ``[step-id]`` is literal."""
+        """Print one durable line. Markup is off so ``[step-id]`` is literal.
+
+        The live table is stopped first. Printing through it paints a second
+        copy of the line and leaves stacked header fragments in the scrollback.
+        """
         if not text:
             return
         with self._lock:
-            live = self._live if self._depth == 0 else None
-            console = self.console
-        self._print(live, console, text)
+            suspend = self._live is not None and self._depth == 0
+        if suspend:
+            self._stop()
+        self.console.print(text, highlight=False, markup=False)
+        if suspend:
+            self._start()
+            self._refresh()
 
     def stream(self, text: str) -> None:
         """Alias of ``note`` kept for callers that still say stream."""

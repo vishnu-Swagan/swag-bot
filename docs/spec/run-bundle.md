@@ -94,13 +94,13 @@ A `search` row stores the redacted `query`, `results` (the content strings the s
 
 `files/diffs.json` lists `add`, `modify`, and `delete` with a unified diff of the redacted text.
 
-Top-level run artifacts (`plan.json`, `action-log.jsonl`, `summary.md`, `run.jsonl`) and the `bundle/`, `evidence/`, and `.git/` directories are not part of the workspace snapshot.
+`summary.md` stays in the output directory. `plan.json`, `action-log.jsonl`, and `run.jsonl` live in `<output-dir>/.swag/` (older runs may still have them at the top level). Those files, `summary.md`, and the `bundle/`, `evidence/`, `.swag/`, and `.git/` directories are not part of the workspace snapshot.
 
 ## Evidence ledger
 
 `evidence/run.jsonl` follows the Evidence Contract (`docs/spec/evidence-contract.md`): a `header` line (`spec` `swag-evidence-contract`, `version` `1.0`, `run_id`, `goal`) and then `evidence`, `action`, or `check` lines.
 
-When the run directory already contains `run.jsonl`, the bundle copies that file and sets `evidence.source` to `run.jsonl`. That is the ledger from the evidence work. When the file is absent, the bundle synthesizes a compatible ledger from the tool calls and actions it recorded, and sets `source` to `synthesized`.
+When the run directory contains `.swag/run.jsonl` (or a top-level `run.jsonl` from an older run), the bundle copies that file and sets `evidence.source` to `run.jsonl`. That is the ledger from the evidence work. When the file is absent, the bundle synthesizes a compatible ledger from the tool calls and actions it recorded, and sets `source` to `synthesized`.
 
 ## Undo checkpoints
 

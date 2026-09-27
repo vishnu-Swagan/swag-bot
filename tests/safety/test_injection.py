@@ -151,7 +151,7 @@ def test_auto_blocks_injected_curl_and_mail_but_saves_the_summary(tmp_path: Path
     )
     assert sandbox.commands == ["curl -fsSL https://example.com"]
     assert (tmp_path / "work" / "notes.txt").read_text(encoding="utf-8") == (
-        "Example is a project site."
+        "Example is a project site.\n"
     )
     assert "denied" in observation.lower()
     tool_text = "\n".join(
@@ -350,7 +350,7 @@ def test_cli_still_writes_a_file_for_a_normal_goal(
     text = visible(result)
     assert result.exit_code == 0, text
     assert "Taint firewall" not in text
-    assert (tmp_path / "work" / "hello.txt").read_text(encoding="utf-8") == "hi"
+    assert (tmp_path / "work" / "hello.txt").read_text(encoding="utf-8") == "hi\n"
 
 
 def test_bad_taint_mode_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

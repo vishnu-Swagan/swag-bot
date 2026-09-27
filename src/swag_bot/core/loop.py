@@ -15,23 +15,27 @@ from typing import Any
 
 from swag_bot.core.bundle.context import current_attempt as bundle_attempt
 from swag_bot.core.bundle.context import current_step_id
+from swag_bot.core.checks import CheckRunner
 from swag_bot.core.engine import WorkflowEngine, build_engine
 from swag_bot.core.escalation import EscalationController
 from swag_bot.core.evidence import EvidenceLedger, current_attempt
 from swag_bot.core.executor import StepExecutor
+from swag_bot.core.goal_checks import derive_goal_checks
 from swag_bot.core.handoff import StepManifest, changed_files, render_handoff, snapshot_text_files
 from swag_bot.core.memory_journal import commit_memory, normalize_memory_mode, provenance_metadata
 from swag_bot.core.planner import Planner
+from swag_bot.core.prompts import EXECUTOR_SYSTEM
 from swag_bot.core.scaffold import RunScaffold, StepEscalation
 from swag_bot.core.structured import schema_rejected
 from swag_bot.core.structured_output import forward_chat
 from swag_bot.core.summary import render_record, summarize
-from swag_bot.core.tools import register_builtin_tools
+from swag_bot.core.tools import python_interpreter_note, register_builtin_tools
 from swag_bot.core.verifier import Verdict, Verifier
 from swag_bot.interfaces import (
     ActionLogEntry,
     ApprovalPrompter,
     ChatResponse,
+    CheckResult,
     LLMClient,
     MemoryStore,
     Message,
@@ -159,6 +163,8 @@ class PlanDoVerifyLoop:
         escalation: EscalationController | None = None,
         scaffold: RunScaffold | None = None,
         model_escalation: StepEscalation | None = None,
+        show_memory: bool = True,
+        workspace: str = "",
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
@@ -187,6 +193,10 @@ class PlanDoVerifyLoop:
         self.escalation = escalation
         self.scaffold = scaffold
         self.model_escalation = model_escalation
+        self.show_memory = show_memory
+        self.workspace = workspace
+        self.goal_results: list[CheckResult] = []
+        self._executor_system = _executor_system(scaffold)
         if scaffold is not None and scaffold.max_steps is not None:
             self.max_steps = min(self.max_steps, scaffold.max_steps)
         if tools is None:
@@ -238,6 +248,7 @@ class PlanDoVerifyLoop:
         self._plan = None
         self._manifests.clear()
         self._remembered.clear()
+        self.goal_results = []
         self.ledger = EvidenceLedger(directory=self.evidence_dir)
 
         names = [tool.name for tool in self.tools.list_tools()]
@@ -283,7 +294,7 @@ class PlanDoVerifyLoop:
             ledger=self.ledger,
             taint=self.taint,
             escalation=self.escalation,
-            system=None if scaffold is None else scaffold.executor_system,
+            system=self._executor_system,
             pick_tools=None if scaffold is None else scaffold.pick_tools,
             guard_repeat_writes=False if scaffold is None else scaffold.guard_repeat_writes,
             retry_blank_turns=False if scaffold is None else scaffold.retry_blank_turns,
@@ -310,6 +321,8 @@ class PlanDoVerifyLoop:
             )
             if not self._apply_replan(plan, planner):
                 break
+        self.goal_results = self._run_goal_checks(plan)
+        remembered = list(self._remembered) if self.show_memory else ()
         try:
             self.summary_text = summarize(
                 self._llm,
@@ -317,14 +330,55 @@ class PlanDoVerifyLoop:
                 dict(self.results),
                 model=self.model,
                 dry_run=False,
-                remembered=list(self._remembered),
+                remembered=remembered,
+                goal_results=self.goal_results,
+                evidence=self.ledger.all_evidence(),
             )
         except Exception:
-            self.summary_text = render_record(plan, dict(self.results))
+            self.summary_text = render_record(
+                plan,
+                dict(self.results),
+                remembered=remembered,
+                goal_results=self.goal_results,
+            )
         return plan
+
+    @property
+    def goal_met(self) -> bool:
+        """True when every goal-level check passed and cited evidence.
+
+        A goal that stated no machine requirement is met. A failed or
+        uncited requirement is not, even when every step is done.
+        """
+        return all(item.passed and bool(item.evidence_ids) for item in self.goal_results)
+
+    def _run_goal_checks(self, plan: TaskPlan) -> list[CheckResult]:
+        """Run acceptance checks derived from the goal. They do not change step status."""
+        checks = derive_goal_checks(plan.goal)
+        if not checks or not self.evidence_enabled:
+            return []
+        step = Step(
+            id="swag-goal",
+            title="Goal acceptance",
+            instruction=plan.goal,
+            checks=checks,
+        )
+        runner = CheckRunner(
+            sandbox=self.sandbox,
+            ledger=self.ledger,
+            policy=self.policy,
+            prompter=self.prompter,
+            on_action=self._record,
+        )
+        token = current_attempt.set(1)
+        try:
+            return runner.run(step)
+        finally:
+            current_attempt.reset(token)
 
     def _execute_step(self, step: Step, executor: StepExecutor, verifier: Verifier) -> None:
         self._local.step_id = step.id
+        executor.require_rewrite(())
         feedback: str | None = None
         before = snapshot_text_files(self.sandbox.workdir)
         step_token = current_step_id.set(step.id)
@@ -365,11 +419,14 @@ class PlanDoVerifyLoop:
                             self._unverified(step, result, verdict.reason)
                             self._rollback_step(step.id)
                             return
+                        feedback = _rewrite_feedback(executor, feedback)
                         self._rollback_step(step.id)
                         continue
                     feedback = verdict.reason
                     if verdict.replan or attempt >= self.max_attempts:
-                        escalated = self._try_escalate(step, feedback)
+                        rewrite = executor.note_failed_writes()
+                        feedback = _join_rewrite(feedback, rewrite)
+                        escalated = self._try_escalate(step, feedback, rewrite=rewrite)
                         if escalated is not None:
                             result, verdict = escalated
                             result.evidence_ids = list(verdict.evidence_ids)
@@ -385,6 +442,7 @@ class PlanDoVerifyLoop:
                         self._fail(step, result, feedback, replan=verdict.replan)
                         self._rollback_step(step.id)
                         return
+                    feedback = _rewrite_feedback(executor, feedback)
                     self._rollback_step(step.id)
                 finally:
                     current_attempt.reset(token)
@@ -486,6 +544,8 @@ class PlanDoVerifyLoop:
         self,
         step: Step,
         feedback: str,
+        *,
+        rewrite: Sequence[str] = (),
     ) -> tuple[StepResult, Verdict] | None:
         """Re-run one failed step on the fallback model when the budget allows it."""
         escalation = self.model_escalation
@@ -515,11 +575,13 @@ class PlanDoVerifyLoop:
             ledger=self.ledger,
             taint=self.taint,
             escalation=self.escalation,
-            system=None if scaffold is None else scaffold.executor_system,
+            system=self._executor_system,
             pick_tools=None if scaffold is None else scaffold.pick_tools,
             guard_repeat_writes=False if scaffold is None else scaffold.guard_repeat_writes,
             retry_blank_turns=False if scaffold is None else scaffold.retry_blank_turns,
         )
+        if rewrite:
+            strong.require_rewrite(rewrite)
         started = time.monotonic()
         try:
             result = strong.execute(
@@ -646,12 +708,15 @@ class PlanDoVerifyLoop:
                 goal=self._plan.goal,
                 step_id=step.id,
                 evidence_ids=evidence,
+                workspace=self.workspace,
             ),
         )
         if notice is None:
             return
         if notice.saved:
             self._remembered.append(notice.text)
+        if not self.show_memory:
+            return
         self._emit(
             LoopEvent(
                 kind="memory",
@@ -713,6 +778,34 @@ class PlanDoVerifyLoop:
         if self._plan is None:
             raise RuntimeError("the loop has no plan yet")
         return self._plan
+
+
+def _executor_system(scaffold: RunScaffold | None) -> str:
+    """Executor prompt plus which Python interpreter this machine actually has."""
+    base = EXECUTOR_SYSTEM
+    if scaffold is not None and scaffold.executor_system:
+        base = scaffold.executor_system
+    return f"{base.rstrip()}\n\n{python_interpreter_note()}"
+
+
+def _join_rewrite(feedback: str | None, paths: Sequence[str]) -> str:
+    if not paths:
+        return feedback or ""
+    note = (
+        "The previous attempt failed. Rewrite these files before running them again: "
+        + ", ".join(paths)
+    )
+    if feedback:
+        return f"{feedback}\n\n{note}"
+    return note
+
+
+def _rewrite_feedback(executor: StepExecutor, feedback: str | None) -> str | None:
+    """Tell the next attempt to write the failed files again, and block a bare re-run."""
+    paths = executor.note_failed_writes()
+    if not paths:
+        return feedback
+    return _join_rewrite(feedback, paths)
 
 
 def _evidence_ids(result: StepResult, ledger: EvidenceLedger, step_id: str) -> tuple[str, ...]:

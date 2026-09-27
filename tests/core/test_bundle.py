@@ -112,7 +112,7 @@ def test_recorded_replay_matches_offline(tmp_path: Path, monkeypatch: pytest.Mon
     assert result.exit_code == 0, text
     bundle = out / "bundle"
     assert f"Bundle: {bundle}" in text
-    assert (out / "hello.txt").read_text(encoding="utf-8") == "hello"
+    assert (out / "hello.txt").read_text(encoding="utf-8") == "hello\n"
     manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["spec"] == "swag-run-bundle"
     assert manifest["version"] == "1.0"
@@ -124,7 +124,7 @@ def test_recorded_replay_matches_offline(tmp_path: Path, monkeypatch: pytest.Mon
     assert report.matched, report.differences
     assert report.model_mismatches == 0
     assert report.step_status == {"write": "done"}
-    assert (replay_dir / "hello.txt").read_text(encoding="utf-8") == "hello"
+    assert (replay_dir / "hello.txt").read_text(encoding="utf-8") == "hello\n"
     assert isinstance(BundleReplayer(), RunReplayer)
 
 
@@ -225,7 +225,7 @@ def test_replay_cli_inspect_and_export(tmp_path: Path, monkeypatch: pytest.Monke
     )
     assert replayed.exit_code == 0, visible(replayed)
     assert "Matched the bundle." in visible(replayed)
-    assert (replay_dir / "hello.txt").read_text(encoding="utf-8") == "hello"
+    assert (replay_dir / "hello.txt").read_text(encoding="utf-8") == "hello\n"
 
 
 def test_denied_replay_stays_denied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -308,7 +308,7 @@ def test_synthesized_evidence_and_included_ledger(
     assert evidence[0]["kind"] == "tool"
     manifest = json.loads((out / "bundle" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["evidence"]["source"] == "run.jsonl"
-    assert (out / "run.jsonl").read_text(encoding="utf-8") == ledger
+    assert (out / ".swag" / "run.jsonl").read_text(encoding="utf-8") == ledger
 
     from swag_bot.core.bundle.evidence_io import include_evidence
 
@@ -502,8 +502,8 @@ def test_fallback_handoff_and_memory(tmp_path: Path, monkeypatch: pytest.MonkeyP
     replayed = tmp_path / "depended-replay"
     report = replay_run(depended / "bundle", workdir=replayed)
     assert report.matched, report.differences
-    assert (replayed / "a.txt").read_text(encoding="utf-8") == "a"
-    assert (replayed / "b.txt").read_text(encoding="utf-8") == "b"
+    assert (replayed / "a.txt").read_text(encoding="utf-8") == "a\n"
+    assert (replayed / "b.txt").read_text(encoding="utf-8") == "b\n"
 
 
 def test_live_replay_reports_a_difference(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -561,7 +561,7 @@ def test_live_replay_reports_a_difference(tmp_path: Path, monkeypatch: pytest.Mo
     report = replay_run(out / "bundle", mode="live", llm=other, workdir=replay_dir)
     assert report.matched is False
     assert report.differences
-    assert (replay_dir / "other.txt").read_text(encoding="utf-8") == "other"
+    assert (replay_dir / "other.txt").read_text(encoding="utf-8") == "other\n"
 
 
 def test_recorded_tools_restore_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -590,7 +590,7 @@ def test_recorded_tools_restore_files(tmp_path: Path, monkeypatch: pytest.Monkey
     replay_dir = tmp_path / "canned"
     report = replay_run(out / "bundle", workdir=replay_dir, tool_mode="recorded")
     assert report.matched, report.differences
-    assert (replay_dir / "hello.txt").read_text(encoding="utf-8") == "hello"
+    assert (replay_dir / "hello.txt").read_text(encoding="utf-8") == "hello\n"
 
 
 def test_zip_slip_is_rejected(tmp_path: Path) -> None:

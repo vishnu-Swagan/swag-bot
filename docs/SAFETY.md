@@ -110,8 +110,8 @@ These are real limits, not edge cases to ignore:
 
 `$SWAG_HOME/actions.jsonl` is an append-only index. `swag run` appends every
 action there as it happens, and also writes the same rows to
-`<output-dir>/action-log.jsonl`. The full per-run record, including tool
-evidence and acceptance checks, is `<output-dir>/run.jsonl` (see
+`<output-dir>/.swag/action-log.jsonl`. The full per-run record, including tool
+evidence and acceptance checks, is `<output-dir>/.swag/run.jsonl` (see
 `docs/spec/evidence-contract.md`). `swag safety log` prints the home index,
 so a run and the safety log show the same actions. `swag safety policy`
 prints the autonomy level, the risk rules, active plugin grants, and any

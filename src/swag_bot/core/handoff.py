@@ -14,7 +14,7 @@ from pathlib import Path
 _READ_LIMIT = 8000
 _EXCERPT = 400
 _FILE_CAP = 20
-_SKIP_DIRS = frozenset({".git", "__pycache__", "bundle", "evidence"})
+_SKIP_DIRS = frozenset({".git", ".swag", "__pycache__", "bundle", "evidence"})
 _SKIP_FILES = frozenset({"plan.json", "action-log.jsonl", "summary.md", "run.jsonl"})
 
 

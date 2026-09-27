@@ -283,7 +283,7 @@ def test_auto_approves_writes_without_a_prompt(tmp_path: Path) -> None:
     )
     plan = loop.run("write hello")
     assert plan.steps[0].status is StepStatus.DONE
-    assert sandbox.read_file("note.txt") == "hello"
+    assert sandbox.read_file("note.txt") == "hello\n"
     assert prompter.prompts == []
     assert loop.action_log[0].approver == "auto"
     assert loop.action_log[0].approved is True

@@ -101,6 +101,19 @@ class StepExecutor:
         self.retry_blank_turns = retry_blank_turns
         self._trace_lock = threading.Lock()
         self.traces: dict[str, list[str]] = {}
+        self._attempt_writes: list[str] = []
+        self._rewrite_required: set[str] = set()
+
+    def note_failed_writes(self) -> list[str]:
+        """Remember files this attempt wrote so the next attempt must rewrite them."""
+        paths = list(dict.fromkeys(self._attempt_writes))
+        self._rewrite_required = set(paths)
+        self._attempt_writes = []
+        return paths
+
+    def require_rewrite(self, paths: Sequence[str]) -> None:
+        """Block ``run_shell`` until each path is written again."""
+        self._rewrite_required = {path for path in paths if path}
 
     def execute(
         self,
@@ -111,6 +124,7 @@ class StepExecutor:
         handoff: str = "",
     ) -> StepResult:
         """Run ``step`` once. ``handoff`` is text from the steps this one depends on."""
+        self._attempt_writes = []
         token = _current_step.set(step.id)
         self._step = step
         try:
@@ -175,10 +189,13 @@ class StepExecutor:
         if self.memory_mode == "off":
             return []
         try:
-            hits = self.memory.search(step.title, limit=3)
+            hits = self.memory.search(step.title, limit=8)
         except Exception:
             return []
-        return [label_memory(item) for item in hits]
+        from swag_bot.core.memory_journal import relevant_memories
+
+        chosen = relevant_memories(hits, f"{step.title}\n{step.instruction}", limit=3)
+        return [label_memory(item) for item in chosen]
 
     def trace_for(self, step_id: str) -> list[str]:
         """Tool outcomes recorded while ``step_id`` ran. Empty if it used no tools."""
@@ -196,7 +213,19 @@ class StepExecutor:
                 "Already wrote a file in this step. Do not write it again. "
                 "Run it if the step says to run it."
             )
-        return self._invoke(call)
+        if call.name == "run_shell" and self._rewrite_required:
+            pending = ", ".join(sorted(self._rewrite_required))
+            return (
+                f"error: rewrite {pending} before running it again. "
+                "The previous file contents failed and must not be reused."
+            )
+        result = self._invoke(call)
+        if call.name == "write_file" and not result.startswith("error:"):
+            path = str(call.arguments.get("path") or "").strip()
+            if path:
+                self._attempt_writes.append(path)
+                self._rewrite_required.discard(path)
+        return result
 
     def _invoke(self, call: ToolCall) -> str:
         arguments = dict(call.arguments)

@@ -209,6 +209,11 @@ class EvidenceLedger:
         """Copy one check result into the per-run log."""
         self._append(RunRecord(record="check", check=result))
 
+    def all_evidence(self) -> list[Evidence]:
+        """Every evidence row recorded for this run, in order."""
+        with self._lock:
+            return [event.evidence for event in self._events if event.evidence is not None]
+
     def for_step(self, step_id: str, *, attempt: int | None = None) -> list[Evidence]:
         """Evidence for ``step_id``. ``attempt`` limits the list to one try."""
         with self._lock:

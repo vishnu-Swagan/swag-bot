@@ -90,12 +90,11 @@ class Planner:
                     "This goal writes one file and then runs or reads it. "
                     "Return exactly one step that does both."
                 )
+                last = feedback
                 continue
             if self.strict and _instruction_skips_the_file(goal, steps):
-                feedback = (
-                    "The step instruction must say to write the file named in the goal, "
-                    "then run or read it."
-                )
+                feedback = _skip_feedback(goal, steps)
+                last = feedback
                 continue
             return TaskPlan(goal=goal, steps=steps)
         self.fell_back = True
@@ -174,11 +173,52 @@ def _splits_one_file_goal(goal: str, steps: Sequence[Step]) -> bool:
 
 
 def _instruction_skips_the_file(goal: str, steps: Sequence[Step]) -> bool:
-    """True when the only step never tells the model to write the file."""
+    """True when the only step drops a write, run, check, or read the goal requires."""
+    return _missing_requirement(goal, steps) != ""
+
+
+def _missing_requirement(goal: str, steps: Sequence[Step]) -> str:
+    """Which required action the single step's instruction leaves out.
+
+    An empty string means the instruction covers the goal, or the goal is not
+    a one-file shortcut. ``run``, ``check``, and ``read`` are required when
+    the goal uses those words. A write-only instruction is not enough.
+    """
     if len(steps) != 1 or not _one_file_goal(goal):
-        return False
+        return ""
     instruction = steps[0].instruction.casefold()
-    return re.search(r"\b(write|create|save)\b", instruction) is None
+    text = goal.casefold()
+    if re.search(r"\b(write|create|save)\b", instruction) is None:
+        return "write"
+    wants_run = re.search(r"\b(run|execute)\b", text) is not None
+    says_run = re.search(r"\b(run|execute)\b", instruction) is not None
+    if wants_run and not says_run:
+        return "run"
+    if re.search(r"\b(check|verify)\b", text) and re.search(
+        r"\b(check|verify)\b", instruction
+    ) is None:
+        return "check"
+    if re.search(r"\bread\b", text) and re.search(r"\bread\b", instruction) is None:
+        return "read"
+    return ""
+
+
+def _skip_feedback(goal: str, steps: Sequence[Step]) -> str:
+    missing = _missing_requirement(goal, steps)
+    if missing == "run":
+        return (
+            "The step instruction must say to run or execute the file, not only write it."
+        )
+    if missing == "check":
+        return (
+            "The step instruction must say to check or verify the result, not only write the file."
+        )
+    if missing == "read":
+        return "The step instruction must say to read the file named in the goal."
+    return (
+        "The step instruction must say to write the file named in the goal, "
+        "then run or read it."
+    )
 
 
 def _one_file_goal(goal: str) -> bool:
@@ -187,7 +227,7 @@ def _one_file_goal(goal: str) -> bool:
         return False
     text = goal.casefold()
     makes = re.search(r"\b(write|create|save)\b", text) is not None
-    uses = re.search(r"\b(run|execute|read)\b", text) is not None
+    uses = re.search(r"\b(run|execute|read|check|verify)\b", text) is not None
     return makes and uses
 
 

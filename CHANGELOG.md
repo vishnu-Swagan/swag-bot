@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.0] - 2026-09-27
 
-Integrated on `integration/v0.2`. Not tagged, and the package version stays 0.1.0.
+Package version 0.2.0. Not tagged.
 
 ### Added
 

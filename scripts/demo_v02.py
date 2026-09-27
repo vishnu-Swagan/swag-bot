@@ -103,12 +103,12 @@ def main() -> None:
         max_attempts=1,
         concurrency=1,
     )
-    plan = json.loads((out / "plan.json").read_text(encoding="utf-8"))
+    plan = json.loads((out / ".swag" / "plan.json").read_text(encoding="utf-8"))
     _section("1. Failing check marked failed, with evidence")
     print(f"exit_code={failed.exit_code}")
     for step in plan["steps"]:
         print(f"[{step['status']}] {step['id']} {step['title']}")
-    for line in (out / "run.jsonl").read_text(encoding="utf-8").splitlines():
+    for line in (out / ".swag" / "run.jsonl").read_text(encoding="utf-8").splitlines():
         row = json.loads(line)
         if row.get("record") != "check":
             continue
@@ -158,7 +158,7 @@ def main() -> None:
         max_attempts=1,
         concurrency=1,
     )
-    good_plan = json.loads((good_out / "plan.json").read_text(encoding="utf-8"))
+    good_plan = json.loads((good_out / ".swag" / "plan.json").read_text(encoding="utf-8"))
     run_id = str(good_plan["id"])
     _section("3. Recorded bundle replayed offline")
     print(f"recorded exit_code={good.exit_code} run_id={run_id}")
