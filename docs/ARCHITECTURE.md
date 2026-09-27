@@ -247,9 +247,10 @@ Optional extras, not installed by CI: `.[models]` (litellm), `.[mcp]` (mcp),
 ```bash
 python -m pip install -e ".[dev]"
 ruff check .
+mypy
 pytest
 swag --help
 ```
 
-CI runs ruff and pytest on Python 3.11 and 3.12. mypy is available
-(`disallow_untyped_defs` on `swag_bot`) and is not part of CI yet.
+CI runs ruff, mypy, and pytest on Python 3.11 and 3.12. mypy is `strict` on
+the `swag_bot` package.

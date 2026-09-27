@@ -8,13 +8,25 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, TypeVar, cast
 
 from swag_bot import __version__
 from swag_bot.errors import SwagError
 
 TaskRunner = Callable[[str], str]
 SkillProvider = Callable[[], Sequence[Any]]
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _typed_tool(server: Any, *, description: str) -> Callable[[F], F]:
+    """Apply ``server.tool`` without erasing the wrapped function's type.
+
+    ``mcp`` is an optional, untyped extra (``ignore_missing_imports``). Under
+    strict mypy that decorator would make the tool functions untyped. The
+    cast keeps their signatures. Runtime behavior is unchanged.
+    """
+    decorator = server.tool(description=description)
+    return cast(Callable[[F], F], decorator)
 
 
 def build_swag_mcp_server(
@@ -40,7 +52,10 @@ def build_swag_mcp_server(
         version=__version__,
     )
 
-    @server.tool(description="Run a Swag Bot task. Pass the goal; the result is a short summary.")
+    @_typed_tool(
+        server,
+        description="Run a Swag Bot task. Pass the goal; the result is a short summary.",
+    )
     def swag_run_task(goal: str) -> str:
         """Run a Swag Bot task and return a short summary."""
         if not goal or not goal.strip():
@@ -52,7 +67,7 @@ def build_swag_mcp_server(
             return summary
         return json.dumps(summary)
 
-    @server.tool(description="List Agent Skills (name and description).")
+    @_typed_tool(server, description="List Agent Skills (name and description).")
     def swag_list_skills() -> str:
         """List Agent Skills as a JSON array of name and description."""
         if skills_provider is None:
