@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import importlib
 import json
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, cast
 
 from pydantic import ValidationError
@@ -78,8 +78,13 @@ class LiteLLMClient:
         *,
         tools: Sequence[Tool] | None = None,
         model: str | None = None,
+        response_format: Mapping[str, Any] | None = None,
     ) -> ChatResponse:
-        """One completion. Native tools first, then JSON-in-text if needed."""
+        """One completion. Native tools first, then JSON-in-text if needed.
+
+        ``response_format`` is forwarded to LiteLLM. A provider that rejects
+        the schema is called once more without it.
+        """
         chosen = model or self.model
         if tools:
             try:
@@ -89,14 +94,27 @@ class LiteLLMClient:
                     model=chosen,
                     native_tools=True,
                     stream=False,
+                    response_format=response_format,
                 )
             except ToolCallingUnsupported:
                 instructed = _with_tool_instruction(messages, tools)
                 response = self._complete(
-                    instructed, tools=None, model=chosen, native_tools=False, stream=False
+                    instructed,
+                    tools=None,
+                    model=chosen,
+                    native_tools=False,
+                    stream=False,
+                    response_format=response_format,
                 )
                 return _overlay_text_tool_calls(response, tools)
-        return self._complete(messages, tools=None, model=chosen, native_tools=False, stream=False)
+        return self._complete(
+            messages,
+            tools=None,
+            model=chosen,
+            native_tools=False,
+            stream=False,
+            response_format=response_format,
+        )
 
     def complete(self, prompt: str, *, model: str | None = None) -> str:
         """Single user prompt in, assistant text out."""
@@ -143,8 +161,15 @@ class LiteLLMClient:
         model: str,
         native_tools: bool,
         stream: bool,
+        response_format: Mapping[str, Any] | None = None,
     ) -> ChatResponse:
-        raw = self._invoke(messages, tools if native_tools else None, model, stream=stream)
+        raw = self._invoke(
+            messages,
+            tools if native_tools else None,
+            model,
+            stream=stream,
+            response_format=response_format,
+        )
         reported_tools = tools if native_tools else None
         return _response_from_litellm(raw, self.litellm_model(model), reported_tools)
 
@@ -173,6 +198,8 @@ class LiteLLMClient:
         model: str,
         *,
         stream: bool,
+        response_format: Mapping[str, Any] | None = None,
+        _allow_format_retry: bool = True,
     ) -> Any:
         fn = self._completion_fn or _load_litellm_completion()
         kwargs: dict[str, Any] = {
@@ -184,6 +211,8 @@ class LiteLLMClient:
         if tools:
             kwargs["tools"] = tools_as_openai(tools)
             kwargs["tool_choice"] = "auto"
+        if response_format is not None:
+            kwargs["response_format"] = dict(response_format)
         if self.api_base:
             kwargs["api_base"] = self.api_base
         # Read the key at call time. Do not store it on self.
@@ -196,6 +225,19 @@ class LiteLLMClient:
             raise
         except Exception as exc:
             message = redact_secrets(str(exc))
+            if (
+                response_format is not None
+                and _allow_format_retry
+                and _format_unsupported(message)
+            ):
+                return self._invoke(
+                    messages,
+                    tools,
+                    model,
+                    stream=stream,
+                    response_format=None,
+                    _allow_format_retry=False,
+                )
             if tools and _tools_unsupported(message):
                 raise ToolCallingUnsupported(message) from exc
             raise ModelError(message) from exc
@@ -320,6 +362,19 @@ def _field(value: Any, name: str) -> Any:
     if isinstance(value, dict):
         return value.get(name)
     return getattr(value, name, None)
+
+
+def _format_unsupported(message: str) -> bool:
+    text = message.lower()
+    needles = (
+        "response_format",
+        "json_schema",
+        "unsupported schema",
+        "does not support json",
+        "invalid schema",
+        "structured output",
+    )
+    return any(needle in text for needle in needles)
 
 
 def _tools_unsupported(message: str) -> bool:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from typer.testing import CliRunner
 
@@ -61,6 +63,28 @@ def test_serve_mcp_help() -> None:
     assert "stdio" in text
     assert "--http" in text
     assert "\x1b" not in text
+
+
+def test_doctor_reports_the_sqlite_memory_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("SWAG_HOME", str(home))
+    absent = runner.invoke(app, ["doctor"])
+    absent_text = _visible(absent)
+    assert absent.exit_code == 0
+    assert "sqlite (config: memory)" in absent_text
+    assert str(home / "memory.db") in absent_text
+    assert "not created yet" in absent_text
+    assert "memory.mode" in absent_text
+    from swag_bot.memory.sqlite import SQLiteMemoryStore
+
+    SQLiteMemoryStore(home / "memory.db").close()
+    present = runner.invoke(app, ["doctor"])
+    present_text = _visible(present)
+    assert "present" in present_text
+    assert "(none)" not in present_text.split("memory.path", 1)[1].split("sandbox.mode", 1)[0]
 
 
 def test_doctor_hides_secrets(monkeypatch: pytest.MonkeyPatch) -> None:

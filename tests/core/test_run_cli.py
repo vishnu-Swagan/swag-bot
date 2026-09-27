@@ -146,6 +146,99 @@ def test_default_output_dir_and_graphbit_fallback(
     assert (folders[0] / "summary.md").is_file()
 
 
+def test_approval_run_prints_each_line_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    llm = FakeLLMClient(
+        [
+            _write_plan(),
+            ChatResponse(
+                message=Message.assistant(
+                    tool_calls=[
+                        ToolCall(
+                            id="c1",
+                            name="write_file",
+                            arguments={"path": "hello.txt", "content": "hello"},
+                        )
+                    ]
+                )
+            ),
+            "wrote hello.txt",
+            verdict(True, "file contains hello"),
+            "Wrote hello.txt.",
+        ]
+    )
+    monkeypatch.setattr("swag_bot.core.cli.build_llm_client", lambda settings: llm)
+    out = tmp_path / "out"
+    result = runner.invoke(
+        app,
+        ["run", "write hello", "--output-dir", str(out), "--max-attempts", "1"],
+        input="y\n",
+    )
+    text = _visible(result)
+    assert result.exit_code == 0, text
+    assert text.count("[done] write Write hello") == 1
+    assert text.count("[write] wrote hello.txt") == 1
+    assert text.count("# Summary") == 1
+    assert "remembered:" in text
+    assert "evidence none" in text
+    for line in text.splitlines():
+        if "Allow this action" in line:
+            assert "write_file" not in line
+    assert (out / "hello.txt").read_text(encoding="utf-8") == "hello"
+
+
+def test_strict_plan_exits_when_the_model_is_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    llm = FakeLLMClient(["not json", "still not json"])
+    monkeypatch.setattr("swag_bot.core.cli.build_llm_client", lambda settings: llm)
+    result = runner.invoke(
+        app,
+        ["run", "do the thing", "--strict-plan", "--output-dir", str(tmp_path / "out")],
+    )
+    text = _visible(result)
+    assert result.exit_code == 1
+    assert "PLAN FALLBACK" in text
+    assert "Strict planning" in text
+
+
+def test_recalled_memory_is_announced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from swag_bot.core.cli import execute_goal
+    from tests.fakes import InMemoryMemoryStore
+
+    memory = InMemoryMemoryStore()
+    memory.add(
+        "write hello was saved in note.txt",
+        metadata={
+            "kind": "step",
+            "run_id": "earlier",
+            "step_id": "write",
+            "goal": "write a note",
+            "evidence_ids": ["ev-1"],
+            "source": "swag",
+        },
+    )
+    llm = FakeLLMClient([_write_plan()])
+    monkeypatch.setattr("swag_bot.core.cli.build_llm_client", lambda settings: llm)
+    monkeypatch.setattr("swag_bot.core.cli.build_memory_store", lambda settings: memory)
+    notes: list[str] = []
+    result = execute_goal(
+        "write hello",
+        dry_run=True,
+        output_dir=tmp_path / "out",
+        announce=notes.append,
+        on_event=lambda event: None,
+    )
+    assert result.exit_code == 0
+    assert any("recalled:" in line and "earlier" in line and "ev-1" in line for line in notes)
+    planner = llm.messages[0][-1].content or ""
+    assert "write hello was saved in note.txt" in planner
+    assert "run earlier" in planner
+
+
 def test_denied_write_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     llm = FakeLLMClient(
         [

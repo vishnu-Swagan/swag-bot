@@ -75,6 +75,16 @@ def test_invalid_toml(tmp_path: Path) -> None:
         load_settings(path)
 
 
+def test_memory_mode_defaults_and_rejects_unknown(tmp_path: Path) -> None:
+    assert load_settings(tmp_path / "missing.toml").memory.mode == "auto"
+    path = tmp_path / "config.toml"
+    path.write_text('[memory]\nmode = "ask"\n', encoding="utf-8")
+    assert load_settings(path).memory.mode == "ask"
+    path.write_text('[memory]\nmode = "sometimes"\n', encoding="utf-8")
+    with pytest.raises(ConfigError, match="memory.mode"):
+        load_settings(path)
+
+
 def test_bad_autonomy(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     path.write_text('autonomy = "yolo"\n', encoding="utf-8")

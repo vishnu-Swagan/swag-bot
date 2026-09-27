@@ -223,7 +223,7 @@ def _print_plugin_list() -> None:
 
 def _print_plugin_info(plugin: LoadedPlugin, *, enabled: bool | None) -> None:
     manifest = plugin.manifest
-    console = Console(no_color=True, soft_wrap=True, width=100)
+    console = _console()
     console.print(f"name: {manifest.name}")
     if manifest.display_name:
         console.print(f"display name: {manifest.display_name}")
@@ -255,18 +255,21 @@ def _print_named(label: str, names: list[str]) -> None:
 
 
 def _print_permissions(action: ActionRequest) -> None:
+    """Show the install request once.
+
+    ``action.summary`` already names the permissions. A second bullet list
+    made the prompt repeat them.
+    """
     typer.echo(action.summary)
-    permissions = action.arguments.get("permissions") or []
-    if permissions:
-        typer.echo("Requested permissions:")
-        for name in permissions:
-            typer.echo(f"  - {name}")
-    else:
-        typer.echo("Requested permissions: (none)")
+
+
+def _console() -> Console:
+    """Follow the real terminal width. A fixed width wraps twice on a narrow screen."""
+    return Console(no_color=True, soft_wrap=True)
 
 
 def _table(title: str, columns: list[str]) -> tuple[Console, Table]:
-    console = Console(no_color=True, soft_wrap=True, width=120)
+    console = _console()
     table = Table(title=title, show_header=True, header_style="bold")
     for column in columns:
         table.add_column(column)

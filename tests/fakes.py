@@ -41,6 +41,7 @@ class FakeLLMClient:
         self.messages: list[list[Message]] = []
         self.tools: list[Sequence[Tool] | None] = []
         self.models: list[str | None] = []
+        self.formats: list[Any] = []
 
     def push(self, response: ChatResponse | str) -> None:
         """Append one scripted response."""
@@ -52,10 +53,12 @@ class FakeLLMClient:
         *,
         tools: Sequence[Tool] | None = None,
         model: str | None = None,
+        response_format: Any = None,
     ) -> ChatResponse:
         self.messages.append(list(messages))
         self.tools.append(tools)
         self.models.append(model)
+        self.formats.append(response_format)
         if not self._queue:
             return ChatResponse(message=Message.assistant(""))
         item = self._queue.pop(0)

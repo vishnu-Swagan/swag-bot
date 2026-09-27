@@ -17,16 +17,24 @@ import typer
 
 from swag_bot.config import Settings, load_settings
 from swag_bot.core.artifacts import default_output_dir, write_run_artifacts
-from swag_bot.core.display import TaskListView, display_status
+from swag_bot.core.display import PromptSuspender, RunProgress, TaskListView
 from swag_bot.core.fallbacks import FallbackMemory, FallbackPolicy, FallbackPrompter
 from swag_bot.core.fallbacks import LocalSandbox as FallbackSandbox
 from swag_bot.core.loop import LoopEvent, PlanDoVerifyLoop
+from swag_bot.core.memory_journal import (
+    append_remembered,
+    commit_memory,
+    normalize_memory_mode,
+    provenance_metadata,
+    recall_lines,
+)
 from swag_bot.core.tools import register_builtin_tools
 from swag_bot.errors import NotImplementedYet, SwagError
 from swag_bot.interfaces import (
     ApprovalPrompter,
     AutonomyLevel,
     MCPServerSpec,
+    MemoryItem,
     MemoryStore,
     PermissionPolicy,
     PluginRegistry,
@@ -88,6 +96,20 @@ def run(
         str,
         typer.Option(help="Workflow engine: python (default), graphbit, or auto."),
     ] = "python",
+    strict_plan: Annotated[
+        bool,
+        typer.Option(
+            "--strict-plan",
+            help="Stop if the model plan cannot be parsed. Do not fall back to one step.",
+        ),
+    ] = False,
+    memory_mode: Annotated[
+        str | None,
+        typer.Option(
+            "--memory-mode",
+            help="ask, auto, or off. Overrides memory.mode for this run.",
+        ),
+    ] = None,
 ) -> None:
     """Plan, do, and verify a multi-step task."""
     if not goal.strip():
@@ -97,24 +119,8 @@ def run(
         typer.echo("max-steps, max-attempts, and concurrency must be at least 1", err=True)
         raise typer.Exit(code=1)
 
-    shown: dict[str, str] = {}
     view = TaskListView()
-
-    def on_event(event: LoopEvent) -> None:
-        if event.kind in {"plan", "status"}:
-            view.update(event.plan)
-            for step in event.plan.steps:
-                if event.kind == "status" and event.step_id not in {None, step.id}:
-                    continue
-                label = display_status(step.status)
-                if shown.get(step.id) == label:
-                    continue
-                shown[step.id] = label
-                typer.echo(f"[{label}] {step.id} {step.title}")
-        elif event.text:
-            prefix = f"[{event.step_id}] " if event.step_id else ""
-            view.stream(f"{prefix}{event.text}")
-            typer.echo(f"{prefix}{event.text}")
+    progress = RunProgress(view)
 
     typer.echo(f"Planning: {goal}")
     try:
@@ -129,12 +135,17 @@ def run(
                 concurrency=concurrency,
                 max_attempts=max_attempts,
                 engine=engine,
-                on_event=on_event,
-                announce=typer.echo,
+                on_event=progress,
+                announce=view.note,
+                strict_plan=strict_plan,
+                memory_mode=memory_mode,
+                display=view,
             )
     except (ValueError, SwagError) as exc:
+        view.print_final()
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+    view.print_final()
 
     typer.echo(result.summary.rstrip())
     typer.echo(f"Output: {result.output_dir}")
@@ -156,17 +167,26 @@ def execute_goal(
     on_event: Callable[[LoopEvent], None] | None = None,
     announce: Callable[[str], None] | None = None,
     settings: Settings | None = None,
+    strict_plan: bool = False,
+    memory_mode: str | None = None,
+    display: TaskListView | None = None,
 ) -> GoalResult:
     """Run one goal with the configured model, sandbox, policy, tools, and memory.
 
     Recalls memories and selects plugin skills before planning. Saves the
-    summary to memory after the run. MCP tools come from ``~/.swag/mcp.json``
+    summary to memory after the run. MCP tools come from ``$SWAG_HOME/mcp.json``
     and from enabled plugins, on top of the built-in file and shell tools.
     """
     if not goal.strip():
         raise SwagError("goal must not be empty")
     if max_steps < 1 or max_attempts < 1 or concurrency < 1:
         raise SwagError("max-steps, max-attempts, and concurrency must be at least 1")
+    chosen_mode: str | None = None
+    if memory_mode is not None:
+        try:
+            chosen_mode = normalize_memory_mode(memory_mode)
+        except ValueError as exc:
+            raise SwagError(str(exc)) from exc
 
     active = load_settings() if settings is None else settings
     if autonomy is not None:
@@ -174,6 +194,10 @@ def execute_goal(
     if model:
         active = active.model_copy(
             update={"model": active.model.model_copy(update={"model": model})}
+        )
+    if chosen_mode is not None:
+        active = active.model_copy(
+            update={"memory": active.memory.model_copy(update={"mode": chosen_mode})}
         )
 
     llm = build_llm_client(active)
@@ -183,12 +207,18 @@ def execute_goal(
     memory = _memory(active)
     policy = _policy(active, destination)
     prompter = _prompter(active)
+    if display is not None:
+        prompter = PromptSuspender(prompter, display)
     plugins = _plugins(active)
+    if active.memory.mode == "off" and announce is not None:
+        announce("memory off: this run will not read or write memory")
 
     tools = InMemoryToolRegistry()
     register_builtin_tools(tools, sandbox)
     mcp_client = _attach_mcp_tools(tools, active, policy, prompter, plugins)
-    context = _planner_context(goal, memory, plugins)
+    context = _planner_context(
+        goal, memory, plugins, announce=announce, mode=active.memory.mode
+    )
 
     try:
         loop = PlanDoVerifyLoop(
@@ -203,6 +233,8 @@ def execute_goal(
             max_attempts=max_attempts,
             concurrency=concurrency,
             engine=engine,
+            strict_plan=strict_plan,
+            memory_mode=active.memory.mode,
         )
     except (ValueError, SwagError):
         if mcp_client is not None:
@@ -215,7 +247,17 @@ def execute_goal(
     plan = None
     try:
         plan = loop.run(goal, dry_run=dry_run, context=context)
-        _save_summary(memory, goal, loop.summary_text)
+        saved = _save_summary(
+            memory,
+            goal,
+            loop.summary_text,
+            mode=active.memory.mode,
+            prompter=prompter,
+            run_id=plan.id,
+            announce=announce,
+        )
+        if saved:
+            loop.summary_text = append_remembered(loop.summary_text, saved)
         failed = any(step.status == StepStatus.FAILED for step in plan.steps)
         return GoalResult(
             summary=loop.summary_text,
@@ -285,21 +327,31 @@ def _plugins(settings: Settings) -> PluginRegistry | None:
         return None
 
 
-def _planner_context(goal: str, memory: MemoryStore, plugins: PluginRegistry | None) -> str:
+def _planner_context(
+    goal: str,
+    memory: MemoryStore,
+    plugins: PluginRegistry | None,
+    *,
+    announce: Callable[[str], None] | None = None,
+    mode: str = "auto",
+) -> str:
     sections: list[str] = []
-    recalled = _recall(memory, goal)
-    if recalled:
-        lines = ["Relevant memories:", *[f"- {item}" for item in recalled]]
-        sections.append("\n".join(lines))
+    if mode != "off":
+        recalled = recall_lines(_recall_items(memory, goal))
+        if recalled and announce is not None:
+            for line in recalled:
+                announce(line)
+        if recalled:
+            sections.append("Relevant memories:\n" + "\n".join(f"- {item}" for item in recalled))
     skills = _skill_instructions(goal, plugins)
     if skills:
         sections.append(skills)
     return "\n\n".join(sections)
 
 
-def _recall(memory: MemoryStore, goal: str) -> list[str]:
+def _recall_items(memory: MemoryStore, goal: str) -> list[MemoryItem]:
     try:
-        return [item.content for item in memory.search(goal, limit=5)]
+        return list(memory.search(goal, limit=5))
     except Exception:
         return []
 
@@ -324,14 +376,32 @@ def _skill_instructions(goal: str, plugins: PluginRegistry | None) -> str:
     return "Selected skills:\n\n" + "\n\n".join(blocks)
 
 
-def _save_summary(memory: MemoryStore, goal: str, summary: str) -> None:
+def _save_summary(
+    memory: MemoryStore,
+    goal: str,
+    summary: str,
+    *,
+    mode: str,
+    prompter: ApprovalPrompter,
+    run_id: str,
+    announce: Callable[[str], None] | None,
+) -> str:
+    """Save the run summary. Return the ``remembered:`` line when it was stored."""
     text = summary.strip()
-    if not text:
-        return
-    try:
-        memory.add(text, metadata={"kind": "run-summary", "goal": goal})
-    except Exception:
-        return
+    notice = commit_memory(
+        memory,
+        text,
+        mode=mode,
+        prompter=prompter,
+        metadata=provenance_metadata(run_id=run_id, kind="run-summary", goal=goal),
+    )
+    if notice is None:
+        return ""
+    if notice.saved:
+        return notice.text
+    if announce is not None:
+        announce(notice.text)
+    return ""
 
 
 def _attach_mcp_tools(
@@ -359,7 +429,7 @@ def _attach_mcp_tools(
 
 
 def _mcp_servers(settings: Settings, plugins: PluginRegistry | None) -> list[MCPServerSpec]:
-    """Plugin servers first. An entry in ``~/.swag/mcp.json`` with the same name wins."""
+    """Plugin servers first. An entry in ``$SWAG_HOME/mcp.json`` with the same name wins."""
     merged: dict[str, MCPServerSpec] = {}
     if plugins is not None:
         try:
