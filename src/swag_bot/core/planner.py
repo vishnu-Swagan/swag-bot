@@ -71,6 +71,18 @@ class Planner:
             if not steps:
                 feedback = "The plan had no steps."
                 continue
+            if self.strict and _splits_one_file_goal(goal, steps):
+                feedback = (
+                    "This goal writes one file and then runs or reads it. "
+                    "Return exactly one step that does both."
+                )
+                continue
+            if self.strict and _instruction_skips_the_file(goal, steps):
+                feedback = (
+                    "The step instruction must say to write the file named in the goal, "
+                    "then run or read it."
+                )
+                continue
             return TaskPlan(goal=goal, steps=steps)
         return TaskPlan(goal=goal, steps=[fallback_step(goal)])
 
@@ -114,6 +126,39 @@ class Planner:
             return extract_json(response.message.content or "")
         except PlanParseError as exc:
             raise PlanParseError(str(exc)) from exc
+
+
+_FILENAME = re.compile(r"\b[\w./-]+\.(?:py|txt|md|json|csv|sh)\b", re.IGNORECASE)
+
+
+def _splits_one_file_goal(goal: str, steps: Sequence[Step]) -> bool:
+    """True when a one-file write-and-use goal was split into several steps.
+
+    Small models turn "write fib.py and run it" into a write step, a run step,
+    and a check step, then the first step never writes the file. Strict mode
+    asks for one step instead. Goals that name two files stay multi-step.
+    """
+    if len(steps) <= 1:
+        return False
+    return _one_file_goal(goal)
+
+
+def _instruction_skips_the_file(goal: str, steps: Sequence[Step]) -> bool:
+    """True when the only step never tells the model to write the file."""
+    if len(steps) != 1 or not _one_file_goal(goal):
+        return False
+    instruction = steps[0].instruction.casefold()
+    return re.search(r"\b(write|create|save)\b", instruction) is None
+
+
+def _one_file_goal(goal: str) -> bool:
+    names = {match.group(0).casefold() for match in _FILENAME.finditer(goal)}
+    if len(names) != 1:
+        return False
+    text = goal.casefold()
+    makes = re.search(r"\b(write|create|save)\b", text) is not None
+    uses = re.search(r"\b(run|execute|read)\b", text) is not None
+    return makes and uses
 
 
 def fallback_step(goal: str) -> Step:

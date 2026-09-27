@@ -47,6 +47,7 @@ class _Spec:
     deterministic_verify: bool
     guard_repeat_writes: bool
     narrow_tools: bool
+    retry_blank_turns: bool
 
 
 _SPECS: dict[str, _Spec] = {
@@ -62,6 +63,7 @@ _SPECS: dict[str, _Spec] = {
         deterministic_verify=True,
         guard_repeat_writes=True,
         narrow_tools=True,
+        retry_blank_turns=True,
     ),
     "standard": _Spec(
         name="standard",
@@ -75,6 +77,7 @@ _SPECS: dict[str, _Spec] = {
         deterministic_verify=False,
         guard_repeat_writes=False,
         narrow_tools=False,
+        retry_blank_turns=False,
     ),
     "frontier": _Spec(
         name="frontier",
@@ -88,6 +91,7 @@ _SPECS: dict[str, _Spec] = {
         deterministic_verify=False,
         guard_repeat_writes=False,
         narrow_tools=False,
+        retry_blank_turns=False,
     ),
 }
 
@@ -172,6 +176,7 @@ def _scaffold(name: str, *, schema_ok: bool) -> RunScaffold:
         pick_tools=picker,
         precheck=deterministic_precheck if spec.deterministic_verify else None,
         guard_repeat_writes=spec.guard_repeat_writes,
+        retry_blank_turns=spec.retry_blank_turns,
     )
 
 

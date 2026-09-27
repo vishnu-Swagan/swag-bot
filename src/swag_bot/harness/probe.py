@@ -16,7 +16,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from swag_bot.config import swag_home
-from swag_bot.core.parsing import PlanParseError, extract_json
 from swag_bot.harness.schema import PROBE_SCHEMA
 from swag_bot.harness.sizing import parameter_billions
 from swag_bot.interfaces import ChatResponse, LLMClient, Message, Tool
@@ -290,6 +289,8 @@ def _probe_context(client: LLMClient, model: str) -> int | None:
 
 
 def _score_json(text: str) -> tuple[float, str]:
+    from swag_bot.core.parsing import PlanParseError, extract_json
+
     try:
         payload = extract_json(text)
     except PlanParseError:

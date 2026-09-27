@@ -220,6 +220,7 @@ class PlanDoVerifyLoop:
             system=None if scaffold is None else scaffold.executor_system,
             pick_tools=None if scaffold is None else scaffold.pick_tools,
             guard_repeat_writes=False if scaffold is None else scaffold.guard_repeat_writes,
+            retry_blank_turns=False if scaffold is None else scaffold.retry_blank_turns,
         )
         verifier = Verifier(
             self._llm,

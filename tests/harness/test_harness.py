@@ -181,6 +181,96 @@ def test_tiny_prompts_have_no_sample_id() -> None:
     assert "what this step does" not in PLANNER_SYSTEM_TINY
 
 
+def test_strict_planner_collapses_a_one_file_goal_to_one_step() -> None:
+    split = plan_json(
+        [
+            {"id": "get_code", "title": "Get the code", "instruction": "Observe fib.py."},
+            {"id": "run_script", "title": "Run it", "instruction": "Execute fib.py."},
+            {"id": "check_output", "title": "Check", "instruction": "Read the output."},
+        ]
+    )
+    one = plan_json(
+        [
+            {
+                "id": "fib",
+                "title": "Write and run fib.py",
+                "instruction": "Write fib.py so it prints the 10th Fibonacci number, then run it.",
+            }
+        ]
+    )
+    llm = FakeLLMClient([split, one])
+    plan = Planner(llm, strict=True).create(
+        "Write fib.py that prints the 10th Fibonacci number, run it, and check the output.",
+        max_steps=3,
+    )
+    assert [step.id for step in plan.steps] == ["fib"]
+    feedback = llm.messages[1][1].content or ""
+    assert "exactly one step" in feedback
+
+
+def test_strict_planner_rejects_a_step_that_never_says_to_write() -> None:
+    vague = plan_json(
+        [
+            {
+                "id": "write_fib",
+                "title": "Write fib.py and execute it",
+                "instruction": "Use the Fibonacci function in fib.py and check the output.",
+            }
+        ]
+    )
+    clear = plan_json(
+        [
+            {
+                "id": "fib",
+                "title": "Write and run fib.py",
+                "instruction": "Write fib.py so it prints the 10th Fibonacci number, then run it.",
+            }
+        ]
+    )
+    llm = FakeLLMClient([vague, clear])
+    plan = Planner(llm, strict=True).create(
+        "Write fib.py that prints the 10th Fibonacci number, run it, and check the output.",
+        max_steps=3,
+    )
+    assert [step.id for step in plan.steps] == ["fib"]
+    assert "write the file" in (llm.messages[1][1].content or "")
+
+
+def test_strict_planner_keeps_a_two_file_goal_split() -> None:
+    split = plan_json(
+        [
+            {"id": "costs", "title": "Write costs", "instruction": "Write costs.csv."},
+            {"id": "total", "title": "Write and run", "instruction": "Write total.py and run it."},
+        ]
+    )
+    llm = FakeLLMClient([split])
+    plan = Planner(llm, strict=True).create(
+        "Write costs.csv with two rows, write total.py that prints their sum, and run total.py.",
+        max_steps=3,
+    )
+    assert [step.id for step in plan.steps] == ["costs", "total"]
+
+
+def test_probe_module_imports_before_the_core_package() -> None:
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from swag_bot.harness.probe import choose_scaffold; "
+            "print(choose_scaffold(model='qwen2.5:3b', json_adherence=1, "
+            "tool_call_reliability=1, context_tokens=32768))",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "tiny"
+
+
 def test_strict_planner_rejects_a_copied_sample_then_accepts_a_real_plan() -> None:
     copied = plan_json(
         [
@@ -244,6 +334,7 @@ def test_tiny_harness_on_a_fake_narrows_tools_and_blocks_a_second_write(tmp_path
     assert prepared.scaffold is not None
     assert prepared.scaffold.max_steps == 3
     assert prepared.scaffold.guard_repeat_writes is True
+    assert prepared.scaffold.retry_blank_turns is True
     scaffold = prepared.scaffold
     assert scaffold.pick_tools is not None
     step = Step(
@@ -304,6 +395,43 @@ def test_tiny_harness_on_a_fake_narrows_tools_and_blocks_a_second_write(tmp_path
     assert shown[0] == "write_file"
 
 
+def test_tiny_executor_retries_a_blank_reply(tmp_path: Path) -> None:
+    step = Step(id="fib", title="Write fib.py", instruction="Write fib.py and run it.")
+    llm = FakeLLMClient(
+        [
+            "",
+            ChatResponse(
+                message=Message.assistant(
+                    tool_calls=[
+                        ToolCall(
+                            id="w",
+                            name="write_file",
+                            arguments={"path": "fib.py", "content": "print(55)\n"},
+                        )
+                    ]
+                )
+            ),
+            "Wrote fib.py.",
+        ]
+    )
+    sandbox = FakeSandbox(tmp_path)
+    tools = InMemoryToolRegistry()
+    register_builtin_tools(tools, sandbox)
+    executor = StepExecutor(
+        llm=llm,
+        tools=tools,
+        policy=StaticPolicy(AutonomyLevel.AUTO),
+        prompter=AutoApprovePrompter(),
+        memory=InMemoryMemoryStore(),
+        retry_blank_turns=True,
+        max_tool_rounds=3,
+    )
+    result = executor.execute(step, attempt=1, feedback=None)
+    assert sandbox.read_file("fib.py") == "print(55)\n"
+    assert "empty" in (llm.messages[1][-1].content or "")
+    assert "Wrote fib.py." in result.observation
+
+
 def test_deterministic_check_fails_a_write_that_never_ran() -> None:
     step = Step(id="fib", title="Run fib", instruction="Write fib.py and run it with python.")
     result = StepResult(step_id="fib", status=StepStatus.VERIFYING)
@@ -317,6 +445,16 @@ def test_deterministic_check_fails_a_write_that_never_ran() -> None:
     )
     assert ran is not None
     assert ran.passed is True
+    recovered = deterministic_precheck(
+        step,
+        result,
+        [
+            "run_shell: exit_code=127 timed_out=false",
+            "run_shell: exit_code=0 timed_out=false\nstdout:\n55\n",
+        ],
+    )
+    assert recovered is not None
+    assert recovered.passed is True
 
 
 def test_budget_allows_a_local_fallback_and_blocks_a_cloud_one() -> None:

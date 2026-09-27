@@ -60,6 +60,7 @@ class StepExecutor:
         system: str | None = None,
         pick_tools: ToolPicker | None = None,
         guard_repeat_writes: bool = False,
+        retry_blank_turns: bool = False,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -73,6 +74,7 @@ class StepExecutor:
         self.system = EXECUTOR_SYSTEM if system is None else system
         self.pick_tools = pick_tools
         self.guard_repeat_writes = guard_repeat_writes
+        self.retry_blank_turns = retry_blank_turns
         self._trace_lock = threading.Lock()
         self.traces: dict[str, list[str]] = {}
 
@@ -99,6 +101,11 @@ class StepExecutor:
             if message.content:
                 observation = message.content
             if not message.tool_calls:
+                if self.retry_blank_turns and not (message.content or "").strip():
+                    messages.append(
+                        Message.user("The last reply was empty. Call one tool for this step.")
+                    )
+                    continue
                 hit_limit = False
                 break
             for call in message.tool_calls:

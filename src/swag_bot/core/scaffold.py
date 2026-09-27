@@ -46,6 +46,7 @@ class RunScaffold:
     pick_tools: ToolPicker | None = None
     precheck: Precheck | None = None
     guard_repeat_writes: bool = False
+    retry_blank_turns: bool = False
 
 
 @dataclass

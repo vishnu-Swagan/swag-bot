@@ -66,7 +66,8 @@ id is a new short word for this goal, with no spaces.
 title is one line about this goal.
 instruction says what to do, then a line that starts with "Done when:".
 depends_on is an array of earlier ids from this plan, or an empty array.
-Use as few steps as possible. Writing one file and running it is one step.
+Use as few steps as possible. Writing one file and running or reading it is one step.
+If the goal names one file, return one step, not a write step plus a run step.
 Stay at or under the step limit.
 Do not copy wording from this prompt into the JSON values.
 """
@@ -74,6 +75,7 @@ Do not copy wording from this prompt into the JSON values.
 EXECUTOR_SYSTEM_TINY = f"""{EXECUTOR_PREFIX}
 Do the one step below. Use a tool when the step needs a file or a command.
 Call each tool once. If you write a file the step also says to run, run it next.
+If the shell says a program is not found, call the tool once more with a different program name.
 Then stop. Reply with one sentence about what the tool returned.
 Do not rewrite a file you already wrote. Do not invent command output.
 If an action is denied, say so and stop.

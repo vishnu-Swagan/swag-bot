@@ -30,10 +30,10 @@ def deterministic_precheck(
     wrote = any(line.startswith("write_file:") for line in traces)
     ran = any(line.startswith("run_shell:") for line in traces)
     codes = [int(code) for code in _EXIT.findall(joined)]
-    if codes and any(code != 0 for code in codes):
+    if codes and codes[-1] != 0:
         return EarlyVerdict(False, f"a command exited {codes[-1]}", False)
     if wants_run and wrote and not ran:
         return EarlyVerdict(False, "the file was written but the step did not run it", False)
-    if ran and codes and all(code == 0 for code in codes):
+    if ran and codes and codes[-1] == 0:
         return EarlyVerdict(True, "the command exited 0", False)
     return None
