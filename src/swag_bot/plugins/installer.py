@@ -15,14 +15,17 @@ import subprocess
 import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from swag_bot.config import swag_home
+from swag_bot.errors import SwagError
 from swag_bot.interfaces import (
     ActionRequest,
     ApprovalPrompter,
+    GrantStore,
     Permission,
     PluginManifest,
     RiskLevel,
@@ -52,6 +55,20 @@ _RISK_RANK = {
 }
 
 Announce = Callable[[ActionRequest], None]
+
+# Set by the root CLI. This module does not import the safety package.
+_grant_store: GrantStore | None = None
+
+
+def configure_grant_store(store: GrantStore | None) -> None:
+    """Use ``store`` for install, enable, disable, and remove on the process home.
+
+    Commands that pass an explicit ``home`` leave this store alone unless they
+    also pass ``grant_store``. That keeps unit tests that install into a
+    throwaway directory from writing the process grant file.
+    """
+    global _grant_store
+    _grant_store = store
 
 
 class InstallRecord(BaseModel):
@@ -110,12 +127,15 @@ def install_plugin(
     home: Path | None = None,
     clone: CloneFn | None = None,
     announce: Announce | None = None,
+    grant_store: GrantStore | None = None,
 ) -> InstallRecord:
     """Copy a plugin into the Swag home and record it.
 
     Unless ``assume_yes`` is true, ``prompter`` must allow the install.
     The action passed to the prompter lists the requested permissions.
-    A denial raises ``PluginError`` and does not write the plugin.
+    A denial raises ``PluginError`` and does not write the plugin or its grants.
+    An approval (or ``--yes``) records those permissions on ``grant_store``
+    when one is configured. A disabled install stores them suspended.
     """
     home_dir = _home(home)
     cloner = clone if clone is not None else default_clone
@@ -144,6 +164,12 @@ def install_plugin(
         installed_at=datetime.now(UTC).isoformat(),
     )
     _upsert(home_dir, record)
+    store = _store_for(home, grant_store)
+    if store is not None:
+        _run_store(
+            record.name,
+            partial(store.replace, record.name, record.permissions, active=record.enabled),
+        )
     return record
 
 
@@ -152,26 +178,52 @@ def list_installed(*, home: Path | None = None) -> list[InstallRecord]:
     return _read(_home(home))
 
 
-def set_enabled(name: str, enabled: bool, *, home: Path | None = None) -> InstallRecord:
-    """Flip the enabled flag. Raise ``PluginError`` if ``name`` is not installed."""
+def set_enabled(
+    name: str,
+    enabled: bool,
+    *,
+    home: Path | None = None,
+    grant_store: GrantStore | None = None,
+) -> InstallRecord:
+    """Flip the enabled flag. Raise ``PluginError`` if ``name`` is not installed.
+
+    Disabling suspends the plugin's grants so tagged actions are denied.
+    Enabling resumes the grants that were suspended. Grants the user never
+    approved are not added.
+    """
     home_dir = _home(home)
     records = _read(home_dir)
     for index, record in enumerate(records):
         if record.name == name:
             updated = record.model_copy(update={"enabled": enabled})
             records[index] = updated
+            store = _store_for(home, grant_store)
+            # Suspend before the registry flip so a failed write still denies.
+            # Resume after the flip so a failed resume does not allow early.
+            if store is not None and not enabled:
+                _run_store(name, partial(store.suspend, name))
             _write(home_dir, records)
+            if store is not None and enabled:
+                _run_store(name, partial(store.resume, name))
             return updated
     raise PluginError(f"plugin is not installed: {name}")
 
 
-def remove_plugin(name: str, *, home: Path | None = None) -> None:
-    """Delete the copied plugin and its registry row."""
+def remove_plugin(
+    name: str,
+    *,
+    home: Path | None = None,
+    grant_store: GrantStore | None = None,
+) -> None:
+    """Delete the copied plugin, its registry row, and its grants."""
     home_dir = _home(home)
     records = _read(home_dir)
     kept = [record for record in records if record.name != name]
     if len(kept) == len(records):
         raise PluginError(f"plugin is not installed: {name}")
+    store = _store_for(home, grant_store)
+    if store is not None:
+        _run_store(name, partial(store.revoke, name))
     directory = installed_plugin_dir(home_dir, name)
     if directory.exists():
         shutil.rmtree(directory)
@@ -324,6 +376,23 @@ def _materialize(source: GitSource | LocalSource, tmp: Path, clone: CloneFn) -> 
 
 def _home(home: Path | None) -> Path:
     return (home if home is not None else swag_home()).expanduser()
+
+
+def _store_for(home: Path | None, grant_store: GrantStore | None) -> GrantStore | None:
+    if grant_store is not None:
+        return grant_store
+    if home is None:
+        return _grant_store
+    return None
+
+
+def _run_store(name: str, operation: Callable[[], None]) -> None:
+    try:
+        operation()
+    except PluginError:
+        raise
+    except SwagError as exc:
+        raise PluginError(f"could not update grants for {name}: {exc}") from exc
 
 
 def _upsert(home: Path, record: InstallRecord) -> None:

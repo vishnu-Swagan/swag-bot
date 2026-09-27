@@ -29,9 +29,12 @@ from swag_bot.memory.cli import app as memory_app
 from swag_bot.models.cli import app as models_app
 from swag_bot.plugins.cli import app as plugins_app
 from swag_bot.plugins.cli import skill_app
+from swag_bot.plugins.installer import configure_grant_store
 from swag_bot.safety.cli import app as safety_app
+from swag_bot.safety.grants import JsonGrantStore
 
 configure_server(runner=mcp_task_runner, skills_provider=mcp_skill_provider)
+configure_grant_store(JsonGrantStore())
 
 app = typer.Typer(
     name="swag",

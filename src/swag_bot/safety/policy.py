@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
@@ -86,34 +87,117 @@ def grants_path() -> Path:
 
 
 def load_grants(path: Path | None = None) -> dict[str, set[str]]:
-    """Read ``grants.json``. A missing file means no grants."""
+    """Read active grants from ``grants.json``. A missing file means no grants.
+
+    Suspended grants (plugins that are installed but disabled) are not
+    included. A missing grant is a hard deny and is not lowered here.
+    """
+    plugins, _suspended = read_grant_maps(path)
+    return {name: set(values) for name, values in plugins.items()}
+
+
+def load_suspended_grants(path: Path | None = None) -> dict[str, set[str]]:
+    """Grants remembered for disabled plugins. They are not applied."""
+    _plugins, suspended = read_grant_maps(path)
+    return {name: set(values) for name, values in suspended.items()}
+
+
+def read_grant_maps(
+    path: Path | None = None,
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Active ``plugins`` map and the ``suspended`` map.
+
+    A missing file is two empty maps. When ``plugins`` is absent, the file
+    itself is the active map (older files). ``suspended`` is ignored by
+    ``load_grants``.
+    """
     target = grants_path() if path is None else path
     if not target.is_file():
-        return {}
+        return {}, {}
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise SwagError(f"cannot read grants {target}: {exc}") from exc
-    plugins = data.get("plugins", data) if isinstance(data, dict) else None
-    if not isinstance(plugins, dict):
+    if not isinstance(data, dict):
         raise SwagError(f"cannot read grants {target}: expected a plugins object")
-    grants: dict[str, set[str]] = {}
-    for name, values in plugins.items():
-        if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
-            raise SwagError(f"grants for {name} must be a list of strings")
-        grants[str(name)] = set(values)
-    return grants
+    if "plugins" in data:
+        plugins_raw: object = data["plugins"]
+    else:
+        plugins_raw = {key: value for key, value in data.items() if key != "suspended"}
+    plugins = _permission_map(plugins_raw, target)
+    if "suspended" not in data:
+        return plugins, {}
+    return plugins, _permission_map(data["suspended"], target)
 
 
 def save_grants(grants: Mapping[str, Sequence[str] | set[str]], path: Path | None = None) -> Path:
-    """Write grants. Returns the path written."""
+    """Write active grants and keep any suspended grants already on disk."""
+    target = grants_path() if path is None else path
+    suspended: dict[str, list[str]] = {}
+    if target.is_file():
+        _plugins, suspended = read_grant_maps(target)
+    return write_grant_maps(grants, suspended, target)
+
+
+def write_grant_maps(
+    plugins: Mapping[str, Sequence[str] | set[str]],
+    suspended: Mapping[str, Sequence[str] | set[str]] | None = None,
+    path: Path | None = None,
+) -> Path:
+    """Write ``grants.json``. Returns the path written.
+
+    ``suspended`` is omitted when empty so a file with only active grants
+    stays ``{"plugins": {...}}``.
+    """
     target = grants_path() if path is None else path
     target.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "plugins": {name: sorted(set(values)) for name, values in sorted(grants.items())},
-    }
-    target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    payload: dict[str, dict[str, list[str]]] = {"plugins": _sorted_grants(plugins)}
+    held = _sorted_grants(suspended or {})
+    if held:
+        payload["suspended"] = held
+    temporary = target.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    os.replace(temporary, target)
     return target
+
+
+def change_grant(
+    plugin: str,
+    permission: str,
+    *,
+    add: bool,
+    path: Path | None = None,
+) -> None:
+    """Add or remove one permission without reactivating a suspended plugin."""
+    plugins, suspended = read_grant_maps(path)
+    bucket = suspended if plugin in suspended and plugin not in plugins else plugins
+    current = set(bucket.get(plugin, []))
+    if add:
+        current.add(permission)
+    else:
+        current.discard(permission)
+    if current:
+        bucket[plugin] = sorted(current)
+    else:
+        bucket.pop(plugin, None)
+    write_grant_maps(plugins, suspended, path)
+
+
+def _permission_map(raw: object, target: Path) -> dict[str, list[str]]:
+    if not isinstance(raw, dict):
+        raise SwagError(f"cannot read grants {target}: expected a plugins object")
+    grants: dict[str, list[str]] = {}
+    for name, values in raw.items():
+        if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
+            raise SwagError(f"grants for {name} must be a list of strings")
+        grants[str(name)] = list(values)
+    return grants
+
+
+def _sorted_grants(
+    grants: Mapping[str, Sequence[str] | set[str]],
+) -> dict[str, list[str]]:
+    return {name: sorted(set(values)) for name, values in sorted(grants.items())}
 
 
 def required_permission(action: ActionRequest) -> str:

@@ -13,7 +13,7 @@ from swag_bot.config import load_settings
 from swag_bot.errors import ConfigError, SwagError
 from swag_bot.interfaces import RiskLevel, default_requires_approval
 from swag_bot.safety.log import ActionLog, default_action_log_path
-from swag_bot.safety.policy import grants_path, load_grants, save_grants
+from swag_bot.safety.policy import change_grant, grants_path, load_grants, load_suspended_grants
 
 app = typer.Typer(
     help="Permissions, autonomy, and the action log.",
@@ -100,13 +100,17 @@ def show_policy() -> None:
         raise typer.Exit(code=1) from exc
     if not grants:
         console.print(f"plugin grants: (none) ({grants_path()})")
-        return
-    grant_table = Table(title="plugin grants", show_header=True, header_style="bold")
-    grant_table.add_column("plugin")
-    grant_table.add_column("permissions")
-    for name, permissions in sorted(grants.items()):
-        grant_table.add_row(name, ", ".join(sorted(permissions)))
-    console.print(grant_table)
+    else:
+        _print_grant_table(console, "plugin grants", grants)
+    try:
+        suspended = load_suspended_grants()
+    except SwagError as exc:
+        console.print(str(exc))
+        raise typer.Exit(code=1) from exc
+    if suspended:
+        console.print("")
+        console.print("Suspended grants are not applied while the plugin is disabled.")
+        _print_grant_table(console, "suspended grants", suspended)
 
 
 @app.command("grant")
@@ -136,19 +140,18 @@ def _mutate_grant(plugin: str, permission: str, *, add: bool) -> None:
         console.print("plugin and permission must be non-empty and contain no spaces")
         raise typer.Exit(code=1)
     try:
-        grants = load_grants()
+        change_grant(plugin, permission, add=add)
     except SwagError as exc:
         console.print(str(exc))
         raise typer.Exit(code=1) from exc
-    current = set(grants.get(plugin, set()))
-    if add:
-        current.add(permission)
-    else:
-        current.discard(permission)
-    if current:
-        grants[plugin] = current
-    else:
-        grants.pop(plugin, None)
-    save_grants(grants)
     verb = "granted" if add else "revoked"
     console.print(f"{verb} {permission} for {plugin}")
+
+
+def _print_grant_table(console: Console, title: str, grants: dict[str, set[str]]) -> None:
+    table = Table(title=title, show_header=True, header_style="bold")
+    table.add_column("plugin")
+    table.add_column("permissions")
+    for name, permissions in sorted(grants.items()):
+        table.add_row(name, ", ".join(sorted(permissions)))
+    console.print(table)

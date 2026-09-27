@@ -23,7 +23,9 @@ Docker runs a throwaway container (`--rm`) with the workdir mounted at `/work`. 
 
 ## Permissions
 
-`build_permission_policy(settings)` uses `settings.autonomy` and grants from `$SWAG_HOME/grants.json`.
+`build_permission_policy(settings)` uses `settings.autonomy` and the active grants from `$SWAG_HOME/grants.json`.
+
+Approving `swag plugin install`, or passing `--yes`, writes the plugin's requested permissions into that file. The root command injects a grant store; the plugins package does not import this one. A declined install writes no grants. `swag plugin disable` moves that plugin's grants to a `suspended` object, which `load_grants` does not apply, so tagged actions are denied until `swag plugin enable` moves them back. `swag plugin remove` deletes the plugin from both objects. `swag safety grant` and `swag safety revoke` edit whichever object currently holds the plugin, so a grant issued while the plugin is disabled does not turn the deny back into an allow.
 
 | Autonomy | When it prompts |
 | --- | --- |
@@ -42,7 +44,7 @@ Classification raises risk; it never lowers `destructive`.
 | Delete, spending money, write outside the workdir | `destructive` |
 | Unknown permission names | at least `write` (risky) |
 
-`requires_approval` never prompts less often than `default_requires_approval`. `decide` can also return `deny` with no prompt when an action is tagged with `arguments["plugin"]` and that plugin does not hold the matching grant (`filesystem.read`, `filesystem.write`, `shell`, `network`, `mcp`, `secrets`, or a custom dotted name).
+`requires_approval` never prompts less often than `default_requires_approval`. `decide` can also return `deny` with no prompt when an action is tagged with `arguments["plugin"]` and that plugin does not hold the matching active grant (`filesystem.read`, `filesystem.write`, `shell`, `network`, `mcp`, `secrets`, or a custom dotted name). Install grants do not lower that deny for a permission the user did not approve, and they do not lower a `destructive` classification.
 
 `build_prompter(settings)` is a rich terminal prompt. The default answer is no.
 
@@ -50,7 +52,7 @@ Classification raises risk; it never lowers `destructive`.
 
 ## Action log
 
-`$SWAG_HOME/actions.jsonl` is append-only. `swag safety log` prints it. `swag safety policy` prints the autonomy level, the risk rules, and plugin grants. `swag safety grant` and `swag safety revoke` edit grants.
+`$SWAG_HOME/actions.jsonl` is append-only. `swag safety log` prints it. `swag safety policy` prints the autonomy level, the risk rules, active plugin grants, and any grants suspended because the plugin is disabled. `swag safety grant` and `swag safety revoke` edit grants. Rewriting active grants keeps the `suspended` object, so a manual grant does not drop a disabled plugin's saved permissions.
 
 Secrets are redacted before they are stored: `sk-...` keys, bearer tokens, AWS-style access key ids, GitHub tokens, `password=` / `token=` / `api_key=` assignments, and any value under a secret-named key.
 

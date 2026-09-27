@@ -139,12 +139,14 @@ Installed plugins live in `$SWAG_HOME/plugins/`. You can also point
 Authoring, marketplaces, and the skill format are in
 [docs/PLUGINS.md](docs/PLUGINS.md).
 
-Approving an install records the request. The permission policy reads grants
-from `$SWAG_HOME/grants.json`. Until you grant a plugin, actions tagged with
-that plugin are denied:
+Approving an install, or passing `--yes`, writes the requested permissions
+into `$SWAG_HOME/grants.json`. Actions tagged with that plugin are allowed
+when they need one of those permissions. Anything else stays denied.
+Declining the prompt writes no grants. `swag plugin disable` suspends them
+until `enable`, and `swag plugin remove` revokes them.
 
 ```bash
-swag safety grant example-github-helper mcp network secrets
+swag safety grant example-github-helper filesystem.write
 ```
 
 ## Permissions and autonomy

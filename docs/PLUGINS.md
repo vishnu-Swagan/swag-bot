@@ -229,8 +229,16 @@ swag skill list
 question goes through the `ApprovalPrompter` interface. `--yes` prints the
 same permissions and skips the question.
 
-A denial installs nothing. The plugin is not copied and the registry is not
-changed.
+Approving the prompt, or passing `--yes`, writes those permissions into
+`$SWAG_HOME/grants.json` using the safety grant format
+(`{"plugins": {"<name>": ["<permission>", ...]}}`).
+The permission policy then allows an action tagged with that plugin when the
+action needs one of those permissions. Permissions the plugin did not request
+stay a hard deny. A grant does not lower a `destructive` risk and does not
+prompt less often than the autonomy level.
+
+A denial installs nothing. The plugin is not copied, the registry is not
+changed, and no grants are written.
 
 Accepted plugins are copied to `$SWAG_HOME/plugins/<name>/`. The registry is
 `$SWAG_HOME/plugins/registry.json`:
@@ -251,8 +259,15 @@ Accepted plugins are copied to `$SWAG_HOME/plugins/<name>/`. The registry is
 }
 ```
 
-`defaultEnabled: false` installs the plugin turned off. `disable` keeps the
-files and drops the plugin from discovery. `plugin_dirs` in
+`defaultEnabled: false` installs the plugin turned off and stores the
+approved permissions as suspended grants, so tagged actions stay denied
+until `enable`. `disable` keeps the files, drops the plugin from discovery,
+and suspends its grants for the same reason. `enable` applies those grants
+again. `remove` deletes the copy and revokes the grants, including any that
+were suspended. The plugins package does not import the safety package; the
+root `swag` command injects the grant store.
+
+`plugin_dirs` in
 `$SWAG_HOME/config.toml` is also searched. A plugin found there wins over an
 installed copy with the same name, so a checkout you are editing is the one
 that loads.
@@ -337,7 +352,7 @@ The same directory loads in both places when you follow the Claude layout.
 | Topic | Claude Code / Cowork | Swag Bot |
 | --- | --- | --- |
 | Manifest | `.claude-plugin/plugin.json` | Same fields. Extra keys are preserved. |
-| `permissions` | Ignored (unknown field). | Shown at install and stored on the registry row. |
+| `permissions` | Ignored (unknown field). | Shown at install, stored on the registry row, and written to `grants.json` when the user approves or passes `--yes`. |
 | Skills | Agent Skills `SKILL.md` | Same frontmatter rules and the same three loading steps. |
 | Commands | `commands/*.md`, `$ARGUMENTS` | Same. |
 | Agents | `agents/*.md` | Parsed into `AgentDefinition`. Not executed here. |

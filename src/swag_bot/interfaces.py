@@ -613,6 +613,36 @@ class ApprovalPrompter(Protocol):
         ...
 
 
+@runtime_checkable
+class GrantStore(Protocol):
+    """Remembers which permissions a plugin may use.
+
+    Active grants are what ``PermissionPolicy`` reads. Suspended grants are
+    kept for a later resume and are not active, so plugin-tagged actions stay
+    denied. Implementations must not treat a grant as permission to lower a
+    hard deny or a ``destructive`` risk; that decision stays in the policy.
+    """
+
+    def replace(self, plugin: str, permissions: Sequence[str], *, active: bool = True) -> None:
+        """Set ``plugin``'s grants to exactly ``permissions``.
+
+        When ``active`` is false, store them suspended so they are not applied.
+        """
+        ...
+
+    def suspend(self, plugin: str) -> None:
+        """Stop applying ``plugin``'s grants without forgetting them."""
+        ...
+
+    def resume(self, plugin: str) -> None:
+        """Apply the grants previously suspended for ``plugin``."""
+        ...
+
+    def revoke(self, plugin: str) -> None:
+        """Forget every grant for ``plugin``, active or suspended."""
+        ...
+
+
 class CommandResult(BaseModel):
     """Output of ``Sandbox.run``.
 
@@ -924,6 +954,7 @@ __all__ = [
     "ChatResponse",
     "CommandResult",
     "ExperimentalComponents",
+    "GrantStore",
     "LLMClient",
     "MCPClient",
     "MCPServerSpec",

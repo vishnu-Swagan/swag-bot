@@ -54,6 +54,10 @@ root and may call the public factories:
 | `build_mcp_client(settings)` | `swag_bot.mcp` |
 | `discover_plugins(settings)` / `load_plugin(root)` | `swag_bot.plugins` |
 
+The root `swag` command is the other composition point. It injects the MCP
+task runner and the grant store that `swag plugin install` uses to write
+`$SWAG_HOME/grants.json`. The plugins package does not import safety.
+
 `swag run` calls these factories. If one still raises `NotImplementedYet`,
 the command uses a small in-process stand-in, except for the model client.
 Unit tests inject objects from `tests/fakes.py` and do not need the factories.

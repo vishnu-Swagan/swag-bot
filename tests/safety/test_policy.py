@@ -13,7 +13,15 @@ from swag_bot.interfaces import (
     RiskLevel,
     default_requires_approval,
 )
-from swag_bot.safety.policy import DefaultPermissionPolicy, PolicyDecision
+from swag_bot.safety.policy import (
+    DefaultPermissionPolicy,
+    PolicyDecision,
+    change_grant,
+    load_grants,
+    load_suspended_grants,
+    save_grants,
+    write_grant_maps,
+)
 
 
 def _action(
@@ -129,6 +137,23 @@ def test_plugin_grants_hard_deny() -> None:
     assert policy.decide(denied) is PolicyDecision.ALLOW
     policy.revoke("files", "filesystem.write")
     assert policy.decide(denied) is PolicyDecision.DENY
+
+
+def test_save_grants_keeps_suspended_plugins(tmp_path: Path) -> None:
+    path = tmp_path / "grants.json"
+    write_grant_maps({"files": ["filesystem.read"]}, {"quiet": ["network"]}, path)
+    save_grants({"files": ["filesystem.read", "shell"]}, path)
+    assert load_grants(path)["files"] == {"filesystem.read", "shell"}
+    assert load_suspended_grants(path)["quiet"] == {"network"}
+    assert "quiet" not in load_grants(path)
+
+
+def test_change_grant_on_a_suspended_plugin_stays_suspended(tmp_path: Path) -> None:
+    path = tmp_path / "grants.json"
+    write_grant_maps({}, {"quiet": ["network"]}, path)
+    change_grant("quiet", "mcp", add=True, path=path)
+    assert "quiet" not in load_grants(path)
+    assert load_suspended_grants(path)["quiet"] == {"mcp", "network"}
 
 
 def test_ask_always_still_prompts_a_granted_read() -> None:

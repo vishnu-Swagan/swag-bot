@@ -23,6 +23,8 @@ A loader and installer for Claude Cowork / Claude Code plugins.
   specs, and a keyword skill selector).
 - Installs are copied to `$SWAG_HOME/plugins/<name>/` and recorded in
   `registry.json`. Install shows permissions and asks an `ApprovalPrompter`.
+  An approved install records those permissions through an injected
+  `GrantStore`. This package does not import `safety`.
 
 `docs/PLUGINS.md` is the authoring guide.
 
