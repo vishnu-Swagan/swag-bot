@@ -18,6 +18,7 @@ default, and it does not need an API key.
 - Append-only action log with secret redaction
 - Claude Cowork-compatible plugins, Agent Skills, slash commands, and a marketplace installer
 - MCP client (stdio and streamable HTTP) and `swag serve-mcp`
+- Headless browser plugin (`plugins/browser`, optional `browser` extra)
 - Ollama by default; OpenAI, Anthropic, Gemini, and OpenRouter through LiteLLM
 - Pluggable memory: SQLite (default), a JSON file, or an external agentmemory server
 
@@ -55,11 +56,13 @@ Optional extras (add `@v0.1.0` to the URL to pin the release):
 python -m pip install "swag-bot[models] @ git+https://github.com/vishnu-Swagan/swag-bot.git"
 python -m pip install "swag-bot[mcp] @ git+https://github.com/vishnu-Swagan/swag-bot.git"
 python -m pip install "swag-bot[sandbox] @ git+https://github.com/vishnu-Swagan/swag-bot.git"
+python -m pip install "swag-bot[browser] @ git+https://github.com/vishnu-Swagan/swag-bot.git"
 ```
 
 `models` installs LiteLLM. `mcp` installs the official MCP SDK. `sandbox`
-installs the Docker SDK, used when the `docker` CLI is not on `PATH`. A
-checkout for development is `python -m pip install -e ".[dev]"`.
+installs the Docker SDK, used when the `docker` CLI is not on `PATH`.
+`browser` installs Playwright for the headless browser plugin. A checkout
+for development is `python -m pip install -e ".[dev]"`.
 
 ## One command
 
@@ -334,9 +337,33 @@ claude plugin install swag-bot@swag-bot
 
 The paste-this prompt for an AI chat is [docs/INSTALL_FOR_AGENTS.md](docs/INSTALL_FOR_AGENTS.md). A short index is [llms.txt](llms.txt).
 
+## Browser
+
+The browser plugin opens pages, reads them, clicks, types, fills forms,
+submits, takes screenshots, downloads files, and extracts text. It is a
+Cowork plugin: a skill plus an MCP server (`swag browser-mcp`) that drives
+headless Chromium through Playwright.
+
+```bash
+python -m pip install -e ".[browser]"
+python -m playwright install chromium
+swag plugin install ./plugins/browser
+swag run "Open https://example.com and tell me the heading"
+```
+
+`swag plugin install` shows the grants (`network`, `mcp`, `filesystem.write`)
+and asks before it copies the plugin. Reads of the open page stay read
+actions. Navigation, form submit, and downloads are network actions, so the
+default `ask-risky` autonomy prompts, and the prompt includes the URL. A
+click that would submit a form or open a new domain is refused until the
+agent calls `browser__submit` or `browser__navigate`.
+
+Chromium runs on the host, not inside the Docker sandbox. File and shell
+tools still use the sandbox. Details, including that trade-off, are in
+[plugins/browser/README.md](plugins/browser/README.md).
+
 ## Roadmap
 
-- A browser-use plugin
 - Telegram and Slack front ends
 - A desktop app
 - A plugin gallery

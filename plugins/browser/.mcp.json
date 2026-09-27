@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "browser": {
+      "command": "swag",
+      "args": ["browser-mcp"],
+      "env": {
+        "SWAG_BROWSER_OUTPUT": "${SWAG_BROWSER_OUTPUT:-.}"
+      }
+    }
+  }
+}

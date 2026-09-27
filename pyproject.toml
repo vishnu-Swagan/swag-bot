@@ -40,6 +40,8 @@ sandbox = ["docker"]
 # Apache-2.0 optional workflow engine (InfinitiBit/graphbit).
 # The default scheduler is pure Python and does not import this package.
 graphbit = ["graphbit"]
+# Apache-2.0 headless browser for plugins/browser. CI does not install it.
+browser = ["playwright>=1.49"]
 
 [project.scripts]
 swag = "swag_bot.cli:main"
@@ -83,5 +85,5 @@ strict = true
 # Optional extras. CI and a base install do not provide these modules.
 # ignore_missing_imports stays on the third-party names, not on swag_bot.
 [[tool.mypy.overrides]]
-module = ["mcp", "mcp.*", "anyio", "anyio.*"]
+module = ["mcp", "mcp.*", "anyio", "anyio.*", "playwright", "playwright.*"]
 ignore_missing_imports = true

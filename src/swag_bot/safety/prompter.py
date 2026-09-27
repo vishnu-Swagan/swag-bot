@@ -66,6 +66,9 @@ def _panel(action: ActionRequest) -> Panel:
     plugin = action.arguments.get("plugin")
     if isinstance(plugin, str) and plugin:
         table.add_row("plugin", plugin)
+    permission = action.arguments.get("permission")
+    if isinstance(permission, str) and permission:
+        table.add_row("permission", permission)
     stamp = action.arguments.get(SWAG_TAINT_KEY)
     tainted = isinstance(stamp, dict) and stamp.get("tainted") is True
     if tainted and isinstance(stamp, dict):

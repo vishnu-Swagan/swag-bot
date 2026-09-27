@@ -126,13 +126,19 @@ class Tool(BaseModel):
 
     ``annotations`` is an open bag for tool metadata. Swag Bot reads
     ``swagCompensation`` from it when an MCP tool declares an inverse.
-    Older tools that omit it still validate.
+    ``risk_hint``, ``permission_hint``, and ``plugin`` are optional metadata
+    for the permission policy. They are not sent to the model. The executor
+    copies them onto the action and ignores any copy the model puts in the
+    tool arguments. Hints never lower a ``destructive`` classification.
     """
 
     name: str
     description: str = ""
     parameters: dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
     annotations: dict[str, Any] = Field(default_factory=dict)
+    risk_hint: str | None = None
+    permission_hint: str | None = None
+    plugin: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -1159,7 +1165,8 @@ class MCPServerSpec(BaseModel):
     ``transport`` is ``stdio`` when ``command`` is set, or ``http`` / ``sse``
     / ``ws`` when ``url`` is set. ``headers`` is for streamable HTTP (values
     may still contain ``${VAR}`` placeholders; the client substitutes them).
-    The mcp agent owns the real client.
+    ``plugin`` is the plugin that declared the server, when the loader knows
+    it. The mcp agent owns the real client.
     """
 
     name: str
@@ -1169,6 +1176,7 @@ class MCPServerSpec(BaseModel):
     url: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     transport: str = "stdio"
+    plugin: str | None = None
 
 
 @runtime_checkable

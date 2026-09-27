@@ -156,6 +156,50 @@ def test_change_grant_on_a_suspended_plugin_stays_suspended(tmp_path: Path) -> N
     assert load_suspended_grants(path)["quiet"] == {"mcp", "network"}
 
 
+def test_tool_risk_hint_is_not_forced_up_to_execute() -> None:
+    policy = DefaultPermissionPolicy(AutonomyLevel.ASK_RISKY)
+    read = _action(
+        "tool",
+        summary="browser__snapshot",
+        risk=RiskLevel.READ,
+        risk_hint="read",
+        plugin="browser",
+        permission="mcp",
+    )
+    network = _action(
+        "tool",
+        summary="browser__navigate https://example.com",
+        risk=RiskLevel.NETWORK,
+        risk_hint="network",
+        plugin="browser",
+        permission="network",
+    )
+    untagged = _action("tool", summary="Call MCP tool demo__echo", risk=RiskLevel.READ)
+    write = _action(
+        "tool",
+        summary="browser__fill #q",
+        risk=RiskLevel.WRITE,
+        risk_hint="write",
+    )
+    assert policy.classify(read) is RiskLevel.READ
+    assert policy.requires_approval(read) is False
+    assert policy.classify(write) is RiskLevel.WRITE
+    assert policy.classify(network) is RiskLevel.NETWORK
+    assert policy.requires_approval(network) is True
+    assert policy.classify(untagged) is RiskLevel.EXECUTE
+
+
+def test_read_hint_still_rises_when_the_summary_deletes() -> None:
+    policy = DefaultPermissionPolicy(AutonomyLevel.AUTO)
+    action = _action(
+        "tool",
+        summary="browser__snapshot delete the file",
+        risk=RiskLevel.READ,
+        risk_hint="read",
+    )
+    assert policy.classify(action) is RiskLevel.DESTRUCTIVE
+
+
 def test_ask_always_still_prompts_a_granted_read() -> None:
     policy = DefaultPermissionPolicy(
         AutonomyLevel.ASK_ALWAYS,

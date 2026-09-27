@@ -18,6 +18,7 @@ from rich.console import Console
 from rich.table import Table
 
 from swag_bot import __version__
+from swag_bot.browser.cli import browser_mcp
 from swag_bot.config import config_path, load_settings
 from swag_bot.core.cli import app as core_app
 from swag_bot.core.cli import mcp_skill_provider, mcp_task_runner
@@ -59,6 +60,7 @@ app.add_typer(models_app, name="model")
 app.add_typer(memory_app, name="memory")
 app.add_typer(onboarding_app)
 app.command("undo")(undo_command)
+app.command("browser-mcp")(browser_mcp)
 
 # Names only. doctor prints "set" or "unset" and never the value.
 _SECRET_ENV_VARS = (
@@ -72,6 +74,7 @@ _OPTIONAL_MODULES = (
     ("litellm", "LiteLLM multi-provider client"),
     ("mcp", "MCP Python SDK"),
     ("docker", "Docker SDK for the sandbox"),
+    ("playwright", "Headless Chromium for the browser plugin"),
 )
 
 _OPTIONAL_BINARIES = ("docker", "ollama")

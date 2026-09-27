@@ -27,6 +27,7 @@ src/swag_bot/
   models/           LiteLLM / Ollama / bring-your-own-key clients
   memory/           pluggable MemoryStore
   onboarding/       one-prompt setup, MCP approval bridge, install links
+  browser/          headless browser tools for plugins/browser (Playwright optional)
 tests/fakes.py      FakeLLMClient, FakeSandbox, InMemoryMemoryStore, AutoApprovePrompter
 ```
 

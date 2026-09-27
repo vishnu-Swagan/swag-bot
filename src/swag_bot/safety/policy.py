@@ -216,6 +216,21 @@ def _higher(left: RiskLevel, right: RiskLevel) -> RiskLevel:
     return left if _SEVERITY[left] >= _SEVERITY[right] else right
 
 
+def _declared_risk(action: ActionRequest) -> RiskLevel | None:
+    """Risk copied from tool metadata, not from the model's arguments.
+
+    ``classify`` still refuses to lower ``destructive``. Text that deletes,
+    spends, or calls the network can raise this further.
+    """
+    raw = action.arguments.get("risk_hint")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return RiskLevel(raw)
+    except ValueError:
+        return None
+
+
 class DefaultPermissionPolicy:
     """Classify actions and decide allow, prompt, or hard deny.
 
@@ -326,8 +341,17 @@ class DefaultPermissionPolicy:
             risk = RiskLevel.READ
         if kind in _WRITE_KINDS:
             risk = RiskLevel.WRITE
+        declared = _declared_risk(action)
         if kind in _SHELL_KINDS or _SHELL_TEXT.search(blob):
-            risk = _higher(risk, RiskLevel.EXECUTE)
+            # A tool that declares its own risk (a read of an open page, a
+            # form submit) is not forced up to ``execute``. Untagged tool
+            # calls still are.
+            if declared is None:
+                risk = _higher(risk, RiskLevel.EXECUTE)
+            else:
+                risk = _higher(risk, declared)
+        elif declared is not None:
+            risk = _higher(risk, declared)
         if kind in _NETWORK_KINDS or _NETWORK_TEXT.search(blob) or _SEND_TEXT.search(blob):
             risk = _higher(risk, RiskLevel.NETWORK)
         destructive = (

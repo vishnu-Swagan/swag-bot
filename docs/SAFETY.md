@@ -21,6 +21,13 @@ Docker runs a throwaway container (`--rm`) with the workdir mounted at `/work`. 
 
 `LocalSandbox` is not a container. It is the fallback when Docker is missing.
 
+The browser plugin does not run Chromium inside this sandbox. Headless
+Chromium needs a network and libraries the sandbox image does not have, and
+turning the network on for the container would weaken every shell command in
+the same run. `swag browser-mcp` is a host process. File and shell tools
+still use the sandbox. Browser tool calls still go through the permission
+policy below. See `plugins/browser/README.md`.
+
 ## Permissions
 
 `build_permission_policy(settings)` uses `settings.autonomy` and the active grants from `$SWAG_HOME/grants.json`.
@@ -46,6 +53,8 @@ Classification raises risk; it never lowers `destructive`.
 | Unknown permission names | at least `write` (risky) |
 
 `requires_approval` never prompts less often than `default_requires_approval`. `decide` can also return `deny` with no prompt when an action is tagged with `arguments["plugin"]` and that plugin does not hold the matching active grant (`filesystem.read`, `filesystem.write`, `shell`, `network`, `mcp`, `secrets`, or a custom dotted name). Install grants do not lower that deny for a permission the user did not approve, and they do not lower a `destructive` classification.
+
+A tool may carry `risk_hint`, `permission_hint`, and `plugin`. The executor copies those from the tool spec onto the action and drops any copy the model put in the arguments. `risk_hint` is how a browser read stays a read, and how navigation stays network, instead of every MCP call being treated as a generic shell. Text that deletes, spends, or calls the network can still raise the risk. `classify` does not lower `destructive`. Hints are applied only for MCP servers tagged with a plugin, and only when the tool publishes a `swag` metadata block. A server listed only in `mcp.json` cannot lower its own risk that way.
 
 `build_prompter(settings)` is a rich terminal prompt. The default answer is no.
 
