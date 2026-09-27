@@ -26,6 +26,7 @@ from swag_bot.mcp.cli import serve as mcp_serve
 from swag_bot.memory.cli import app as memory_app
 from swag_bot.models.cli import app as models_app
 from swag_bot.plugins.cli import app as plugins_app
+from swag_bot.plugins.cli import skill_app
 from swag_bot.safety.cli import app as safety_app
 
 app = typer.Typer(
@@ -36,6 +37,7 @@ app = typer.Typer(
 
 app.add_typer(core_app)
 app.add_typer(plugins_app, name="plugin")
+app.add_typer(skill_app, name="skill")
 app.add_typer(safety_app, name="safety")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(models_app, name="model")

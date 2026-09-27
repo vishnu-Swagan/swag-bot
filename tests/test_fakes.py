@@ -24,7 +24,6 @@ from swag_bot.interfaces import (
 from swag_bot.mcp import build_mcp_client
 from swag_bot.memory import build_memory_store
 from swag_bot.models import build_llm_client
-from swag_bot.plugins import discover_plugins, load_plugin
 from swag_bot.registry import InMemoryToolRegistry
 from swag_bot.safety import build_permission_policy, build_prompter, build_sandbox
 from tests.fakes import AutoApprovePrompter, FakeLLMClient, FakeSandbox, InMemoryMemoryStore
@@ -99,12 +98,9 @@ def test_factories_and_loop_are_stubs(tmp_path: Path) -> None:
         build_permission_policy,
         build_prompter,
         build_mcp_client,
-        discover_plugins,
     ):
         with pytest.raises(NotImplementedYet):
             factory(settings)
-    with pytest.raises(NotImplementedYet):
-        load_plugin(tmp_path)
 
     class _Policy:
         @property

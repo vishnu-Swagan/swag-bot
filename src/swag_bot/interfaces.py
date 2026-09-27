@@ -307,6 +307,23 @@ class SlashCommand(BaseModel):
     allowed_tools: str | None = Field(default=None, alias="allowed-tools")
 
 
+class AgentDefinition(BaseModel):
+    """A sub-agent from a plugin ``agents/*.md`` file.
+
+    ``body`` stays empty until the agent is invoked, same as ``SlashCommand``.
+    ``tools`` is the frontmatter tool list (a space-separated string). ``model``
+    is the requested model, or None to inherit the session model.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    name: str
+    description: str = ""
+    body: str = ""
+    tools: str | None = None
+    model: str | None = None
+
+
 class Permission(StrEnum):
     """Built-in plugin capability names.
 
@@ -842,11 +859,61 @@ class MCPClient(Protocol):
         ...
 
 
+@runtime_checkable
+class PluginRegistry(Protocol):
+    """Skills, slash commands, sub-agents, and MCP configs from loaded plugins.
+
+    The implementation lives in ``swag_bot.plugins``. Other packages should
+    depend on this protocol instead of importing that package. ``list_*``
+    methods are discovery-only: command and agent bodies stay empty, and
+    skill metadata does not include ``SKILL.md`` instructions.
+    ``load_command`` substitutes ``$ARGUMENTS``. ``select_skills`` ranks
+    skill descriptions against a goal without calling a model.
+    """
+
+    def list_plugins(self) -> Sequence[Plugin]:
+        """Plugins currently visible to the registry."""
+        ...
+
+    def list_skills(self) -> Sequence[SkillMeta]:
+        """Level-1 metadata for plugin skills and standalone skills."""
+        ...
+
+    def load_skill(self, name: str) -> Skill:
+        """Return one skill. Raise ``KeyError`` if ``name`` is unknown."""
+        ...
+
+    def list_commands(self) -> Sequence[SlashCommand]:
+        """Slash commands. Bodies are empty until ``load_command``."""
+        ...
+
+    def load_command(self, name: str, arguments: str = "") -> SlashCommand:
+        """Return one command with ``$ARGUMENTS`` applied. Raise ``KeyError`` if missing."""
+        ...
+
+    def list_agents(self) -> Sequence[AgentDefinition]:
+        """Sub-agents. Bodies are empty until ``load_agent``."""
+        ...
+
+    def load_agent(self, name: str) -> AgentDefinition:
+        """Return one sub-agent with its prompt body. Raise ``KeyError`` if missing."""
+        ...
+
+    def list_mcp_servers(self) -> Sequence[MCPServerSpec]:
+        """MCP server specs parsed from plugins. Nothing is connected or spawned."""
+        ...
+
+    def select_skills(self, goal: str, *, limit: int = 5) -> Sequence[SkillMeta]:
+        """Skills whose descriptions match ``goal``, best first. Empty if nothing matches."""
+        ...
+
+
 __all__ = [
     "TIMEOUT_EXIT_CODE",
     "ActionKind",
     "ActionLogEntry",
     "ActionRequest",
+    "AgentDefinition",
     "AgentLoop",
     "ApprovalPrompter",
     "AutonomyLevel",
@@ -867,6 +934,7 @@ __all__ = [
     "PluginChannel",
     "PluginDependency",
     "PluginManifest",
+    "PluginRegistry",
     "RiskLevel",
     "Role",
     "Sandbox",
