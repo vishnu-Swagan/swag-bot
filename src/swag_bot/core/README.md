@@ -4,43 +4,28 @@
 
 **Edit only:** `src/swag_bot/core/` and `tests/core/`.
 
-Read `docs/ARCHITECTURE.md` before touching a shared file. `interfaces.py` changes stay additive.
+Read `docs/ARCHITECTURE.md` before touching a shared file. `interfaces.py` changes stay additive. This package does not change `interfaces.py`.
 
-## What goes here
+## What lives here
 
-The loop behind `swag run "<goal>"`.
+`swag run "<goal>"` plans a task, runs the steps, and checks them.
 
-- Turn a goal into a `TaskPlan` of `Step`s (`PlanDoVerifyLoop` in `loop.py`).
-- Do each step with the injected `LLMClient`, `ToolRegistry`, `Sandbox`, and `MemoryStore`.
-- Verify the step, then set its status to `done` or `failed`.
-- Ask `PermissionPolicy` and `ApprovalPrompter` before side effects. The safety package writes the `ActionLogEntry`; call into its public API rather than writing the log from here.
+- `Planner` asks the injected `LLMClient` for a `TaskPlan`. Success criteria are kept in the step instruction (`Success criteria: ...`).
+- `StepExecutor` runs one step. It calls tools on the `ToolRegistry`, asks `PermissionPolicy` and `ApprovalPrompter` before each call, and records an `ActionLogEntry`.
+- `Verifier` asks the model whether the observation meets the success criteria. A failed check is retried up to `max_attempts`. A verdict with `replan: true` asks the planner for replacement steps, still capped by `max_steps`.
+- `PythonWorkflowEngine` runs independent steps with asyncio, up to a concurrency limit. It is the default.
+- `GraphBitWorkflowEngine` is optional (`pip install -e ".[graphbit]"`, Apache-2.0). It is detected at runtime. GraphBit validates the dependency graph. Step bodies still run here so permissions and the injected model stay in Swag Bot. If GraphBit is not installed, `--engine graphbit` falls back to Python.
 
-`loop.py` takes collaborators in its constructor so this package does not import `models`, `memory`, `safety`, `mcp`, or `plugins`. Wire them in `cli.py` when you replace the stub:
+Built-in tools, registered on the `ToolRegistry` and executed through the `Sandbox`:
 
-```python
-from swag_bot.config import load_settings
-from swag_bot.core.loop import PlanDoVerifyLoop
-from swag_bot.memory import build_memory_store
-from swag_bot.models import build_llm_client
-from swag_bot.safety import build_permission_policy, build_prompter, build_sandbox
+- `read_file`
+- `write_file` (paths must stay in the sandbox workdir)
+- `run_shell`
 
-settings = load_settings()
-loop = PlanDoVerifyLoop(
-    llm=build_llm_client(settings),
-    sandbox=build_sandbox(settings),
-    memory=build_memory_store(settings),
-    policy=build_permission_policy(settings),
-    prompter=build_prompter(settings),
-)
-plan = loop.run(goal)
-```
+`loop.py` takes collaborators in its constructor. It does not import `models`, `memory`, `safety`, `mcp`, or `plugins`. `cli.py` is the composition root and calls the public factories. Until a factory is real it raises `NotImplementedYet`. `swag run` then uses a small in-process stand-in for the sandbox, memory, policy, and prompter. The model factory has no stand-in: without it the command exits 2.
 
-Until a factory is real it raises `NotImplementedYet`. Catch that if you want `swag run` to work before the other packages land, and use `tests/fakes.py` in tests.
+The command writes `plan.json`, `action-log.jsonl`, and `summary.md` under `--output-dir` (default `./swag-output/<UTC timestamp>`). `--dry-run` plans only. The terminal shows a live task list (`pending`, `running`, `done`, `failed`, `skipped`) and streams step output.
 
 ## CLI
 
-`cli.py` defines the `run` command. The root app flattens it to `swag run`. Keep that name. Replace `unimplemented("swag run")`.
-
-## Status
-
-Stub. `swag run` exits 2.
+`cli.py` defines `run`. The root app flattens it to `swag run`.
