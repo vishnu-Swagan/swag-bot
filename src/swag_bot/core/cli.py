@@ -256,6 +256,9 @@ def execute_goal(
     record: bool = False,
     bundle_dir: Path | None = None,
     client: LLMClient | None = None,
+    prepare_tools: Callable[[InMemoryToolRegistry], None] | None = None,
+    policy_wrapper: Callable[[PermissionPolicy], PermissionPolicy] | None = None,
+    context_prefix: str = "",
 ) -> GoalResult:
     """Run one goal with the configured model, sandbox, policy, tools, and memory.
 
@@ -265,6 +268,11 @@ def execute_goal(
 
     ``record`` or ``bundle.record`` in config writes a run bundle. ``client``
     replaces the configured model; tests and replay use that.
+
+    ``prompter``, ``prepare_tools``, ``policy_wrapper``, and ``context_prefix``
+    are optional hooks for another front end. The Chrome extension uses them
+    for side-panel approvals, tab tools, and untrusted page text. Omitting
+    them keeps the terminal behavior.
     """
     if not goal.strip():
         raise SwagError("goal must not be empty")
@@ -313,14 +321,16 @@ def execute_goal(
     destination.mkdir(parents=True, exist_ok=True)
     sandbox = _sandbox(active, destination)
     memory = _memory(active)
-    policy = _policy(active, destination)
+    active_policy = _policy(active, destination)
+    if policy_wrapper is not None:
+        active_policy = policy_wrapper(active_policy)
     active_prompter = prompter if prompter is not None else _prompter(active)
     if display is not None:
         active_prompter = PromptSuspender(active_prompter, display)
     plugins = _plugins(active)
     if active.memory.mode == "off" and announce is not None:
         announce("memory off: this run will not read or write memory")
-    sandbox, undo = _attach_undo(active, destination, sandbox, policy, plugins)
+    sandbox, undo = _attach_undo(active, destination, sandbox, active_policy, plugins)
 
     want_record = bundle_dir is not None or record or active.bundle.record
     recorder: RunRecorder | None = None
@@ -347,9 +357,13 @@ def execute_goal(
         tracker.note(goal, source="user", trust=TrustLevel.TRUSTED)
     registry = InMemoryToolRegistry()
     register_builtin_tools(registry, sandbox)
-    mcp_client = _attach_mcp_tools(registry, active, policy, active_prompter, plugins, tracker)
+    mcp_client = _attach_mcp_tools(
+        registry, active, active_policy, active_prompter, plugins, tracker
+    )
     if undo is not None:
         _note_mcp_compensations(undo, registry)
+    if prepare_tools is not None:
+        prepare_tools(registry)
     tools: ToolRegistry = registry
     if recorder is not None:
         tools = recorder.wrap_tools(tools)
@@ -363,6 +377,9 @@ def execute_goal(
         announce=announce,
         mode=active.memory.mode,
     )
+    prefix = context_prefix.strip()
+    if prefix:
+        context = f"{prefix}\n\n{context}" if context else prefix
     if recorder is not None:
         recorder.planner_context = context
         recorder.tool_names = [tool.name for tool in tools.list_tools()]
@@ -382,7 +399,7 @@ def execute_goal(
             llm=session_llm,
             sandbox=sandbox,
             memory=memory,
-            policy=policy,
+            policy=active_policy,
             prompter=active_prompter,
             tools=tools,
             model=active.model.model,

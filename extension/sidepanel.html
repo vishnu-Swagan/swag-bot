@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Swag Bot</title>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="masthead">
+        <p class="eyebrow">On this computer</p>
+        <h1>Swag Bot</h1>
+        <p class="lede">
+          Give the local agent a task. Watch it plan, do, and verify. Approve
+          the steps that change something.
+        </p>
+        <ol class="principles">
+          <li>
+            <strong>No remote bridge.</strong>
+            Chrome starts Swag Bot when this panel opens. Nothing listens on a port.
+          </li>
+          <li>
+            <strong>You approve the risky steps.</strong>
+            Reads can proceed. Clicks, typing, and navigation ask first.
+          </li>
+          <li>
+            <strong>This tab, only if you allow it.</strong>
+            The same permission policy as the terminal.
+          </li>
+        </ol>
+      </aside>
+
+      <main class="panel">
+        <header class="top">
+          <div class="brand">
+            <img src="icons/icon32.png" width="32" height="32" alt="" />
+            <div>
+              <p class="wordmark">Swag <span>Bot</span></p>
+              <p class="sub" id="connection">Connecting…</p>
+            </div>
+          </div>
+          <button type="button" id="cancel" class="ghost" hidden>Cancel</button>
+        </header>
+
+        <section id="setup" class="card setup" hidden>
+          <h2 id="setup-title">Connect Swag Bot</h2>
+          <p id="setup-detail"></p>
+          <ol class="steps-help">
+            <li>Install Swag Bot so <code>swag version</code> works.</li>
+            <li>
+              Register the bridge. This extension's id is
+              <code id="extension-id"></code>.
+              <pre id="install-command"></pre>
+              <button type="button" id="copy-command" class="ghost">Copy command</button>
+            </li>
+            <li>Quit Chrome completely, then open it again.</li>
+            <li>Click the Swag Bot icon to open this panel.</li>
+          </ol>
+          <button type="button" id="retry" class="primary">Try again</button>
+        </section>
+
+        <form id="composer">
+          <div class="label-row">
+            <label for="goal">Task</label>
+            <span class="hint-inline">Ctrl+Enter to run</span>
+          </div>
+          <textarea
+            id="goal"
+            rows="4"
+            placeholder="Summarize this page and list the open questions."
+            required
+          ></textarea>
+          <div class="controls">
+            <label class="field">
+              Autonomy
+              <select id="autonomy">
+                <option value="ask-risky">ask-risky</option>
+                <option value="ask-always">ask-always</option>
+                <option value="auto">auto</option>
+              </select>
+            </label>
+            <button type="button" id="use-page" class="ghost">Use this page</button>
+            <label class="check">
+              <input id="use-tab" type="checkbox" />
+              Act in this tab
+            </label>
+          </div>
+          <p class="hint" id="autonomy-hint"></p>
+          <p class="hint" id="tab-hint" hidden></p>
+          <div id="page-chip" class="chip" hidden>
+            <div>
+              <p class="chip-title" id="page-title"></p>
+              <p class="chip-url" id="page-url"></p>
+            </div>
+            <button type="button" id="clear-page" class="textish">Remove</button>
+          </div>
+          <p id="banner" class="banner" hidden role="status"></p>
+          <button type="submit" id="run" class="primary">Run</button>
+        </form>
+
+        <section id="progress" hidden>
+          <h2>Plan</h2>
+          <ol id="steps"></ol>
+        </section>
+
+        <section id="log-wrap" hidden>
+          <h2>Activity</h2>
+          <div id="log" aria-live="polite"></div>
+        </section>
+
+        <section
+          id="approval"
+          class="approval"
+          hidden
+          role="alertdialog"
+          aria-labelledby="approval-title"
+        >
+          <p class="eyebrow">Approval required</p>
+          <h2 id="approval-title">Allow this action?</h2>
+          <p class="approval-summary" id="approval-summary"></p>
+          <dl id="approval-meta"></dl>
+          <div class="approval-actions">
+            <button type="button" id="deny" class="ghost">Deny</button>
+            <button type="button" id="approve" class="primary">Approve</button>
+          </div>
+          <p class="hint">Deny is the default. Closing the panel stops the task.</p>
+        </section>
+
+        <article id="summary" class="card" hidden>
+          <h2>Summary</h2>
+          <div id="summary-body"></div>
+          <button type="button" id="again" class="ghost">New task</button>
+        </article>
+      </main>
+    </div>
+    <script type="module" src="/src/sidepanel.ts"></script>
+  </body>
+</html>

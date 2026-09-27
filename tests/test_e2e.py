@@ -69,6 +69,10 @@ _COMMANDS = (
     ["memory", "list"],
     ["memory", "forget", "--help"],
     ["browser-mcp", "--help"],
+    ["extension", "--help"],
+    ["extension", "install", "--help"],
+    ["extension", "status", "--help"],
+    ["extension", "remove", "--help"],
 )
 
 

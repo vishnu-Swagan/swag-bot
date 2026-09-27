@@ -28,6 +28,7 @@ src/swag_bot/
   memory/           pluggable MemoryStore
   onboarding/       one-prompt setup, MCP approval bridge, install links
   browser/          headless browser tools for plugins/browser (Playwright optional)
+  extension/        Chrome native messaging host (front end, not an owned package)
 tests/fakes.py      FakeLLMClient, FakeSandbox, InMemoryMemoryStore, AutoApprovePrompter
 ```
 
@@ -222,10 +223,15 @@ load `.env` by itself.
 | `swag serve-mcp` | stdio MCP server; `--http` for streamable HTTP. Runs tasks and lists skills. Approvals use MCP elicitation, not the terminal |
 | `swag setup --auto` | detect a key, Ollama, or a local OpenAI-compatible server and write `config.toml`. Asks before a model download. Falls back to a free-cloud menu. See `docs/MODELS.md` |
 | `swag install-mcp` | print the install command or link for an MCP client |
+| `swag extension install\|status\|remove` | Chrome native messaging host for the side panel in `extension/` |
 | `swag model list\|test\|set` | Ollama by default, LiteLLM for bring-your-own-key providers |
 | `swag memory add\|search\|list\|forget` | SQLite by default |
 | `swag version` | prints `swag-bot` and the version |
 | `swag doctor` | prints config and optional-dep status. `--json` adds a `ready` field and never prints secrets |
+
+`swag extension` is a front end. It calls `execute_goal` and does not own
+`core`, `safety`, or `mcp`. The side panel lives in `extension/` and is not
+imported by the agent loop.
 
 Optional extras: `.[models]` (litellm), `.[mcp]` (mcp), `.[sandbox]` (docker).
 CI installs `.[dev,mcp]` so the stdio approval test runs. `.[dev]` is pytest,

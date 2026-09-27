@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Verification-gated skill learning. A successful run can be distilled into a Cowork-compatible `SKILL.md` and kept in `$SWAG_HOME/skill-candidates/` until evidence verification and a replay both pass. `swag skill learn|candidates|promote|reject|recheck`. Promoted skills land in `$SWAG_HOME/skills/` with provenance.   Unverified runs are never activated.
 - `swag gallery search`, `info`, and `install` for a static JSON gallery index. Install verifies a minisign signature and runs a local static scan before the existing permission prompt. Unsigned or tampered plugins are refused unless `--allow-unsigned` or `--allow-tampered` is passed, and that override is written to `$SWAG_HOME/gallery/audit.jsonl`.
 - `swag gallery keygen`, `sign`, and `bundle` so a publisher can sign a plugin with Swag Bot or with the `minisign` CLI. The index format is documented in `docs/GALLERY.md`.
+- Chrome extension in `extension/` and `swag extension install`. The side panel sends a task to a local native messaging host, streams plan-do-verify progress, and approves or denies actions. Optional tab actions use the same `browser__*` tool names and risk levels as the headless browser plugin.
 
 ## [0.1.0] - 2026-09-27
 

@@ -1,0 +1,17 @@
+{
+  "name": "swag-bot-extension",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Chrome side panel for the local Swag Bot agent.",
+  "type": "module",
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "build": "vite build",
+    "package": "npm run build && python3 store/build_zip.py"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.1",
+    "typescript": "^5.6.3",
+    "vite": "^6.3.5"
+  }
+}
