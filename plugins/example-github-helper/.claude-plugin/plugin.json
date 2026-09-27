@@ -1,0 +1,17 @@
+{
+  "name": "example-github-helper",
+  "displayName": "GitHub Helper",
+  "version": "0.1.0",
+  "description": "Example plugin with a GitHub issue skill, a slash command, and the official GitHub MCP server.",
+  "author": {
+    "name": "Swag Bot",
+    "url": "https://github.com/vishnu-Swagan/swag-bot"
+  },
+  "license": "MIT",
+  "keywords": ["github", "mcp", "example"],
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "agents": "./agents/",
+  "mcpServers": "./.mcp.json",
+  "permissions": ["network", "mcp", "secrets"]
+}

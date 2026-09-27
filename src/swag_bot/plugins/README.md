@@ -2,24 +2,32 @@
 
 **Owner:** the plugins agent.
 
-**Edit only:** `src/swag_bot/plugins/` and `tests/plugins/`.
+**Edit only:** `src/swag_bot/plugins/`, `tests/plugins/`, the top-level
+`plugins/` examples, and `docs/PLUGINS.md`.
 
-Read `docs/ARCHITECTURE.md` before touching a shared file. `interfaces.py` changes stay additive.
+Read `docs/ARCHITECTURE.md` before touching a shared file. `interfaces.py`
+changes stay additive. `AgentDefinition` and `PluginRegistry` were added there
+so other packages can consume plugins without importing this one.
 
-## What goes here
+## What lives here
 
-A loader for Claude Cowork / Claude Code plugins.
+A loader and installer for Claude Cowork / Claude Code plugins.
 
-- Discover plugin roots from `settings.plugin_dirs`. Also accept a directory that contains `.claude-plugin/plugin.json`.
-- Parse that JSON with `PluginManifest.from_plugin_json`. `permissions` is the Swag Bot extension; every other field mirrors the Claude manifest. Unknown keys must keep loading.
-- Agent Skills: build `SkillMeta` from `SKILL.md` frontmatter at discovery time (level 1). `Skill.instructions()` reads the body (level 2). `Skill.read_resource()` reads `scripts/`, `references/`, and `assets/` (level 3). Do not add a required YAML dependency to the base install if you can parse the frontmatter without one; if you need PyYAML, put it in an optional extra.
-- Slash commands from `commands/*.md` as `SlashCommand`. Leave `body` empty until the command runs.
-- `discover_plugins` and `load_plugin` in `__init__.py` are the public entry points. Replace the `NotImplementedYet` stubs. Keep the names.
+- `load_plugin` reads `.claude-plugin/plugin.json` with `PluginManifest`.
+- Skills, slash commands, and sub-agents load progressively: frontmatter at
+  discovery, markdown bodies when invoked, bundled files via `read_resource`.
+- `.mcp.json` is parsed into `MCPServerSpec` values. Servers are not started.
+- `discover_plugins` reads `settings.plugin_dirs` and enabled installs.
+- Standalone skills are discovered in `.agents/skills/` and `$SWAG_HOME/skills/`.
+- `build_registry` returns a `PluginRegistry` (skills, commands, agents, MCP
+  specs, and a keyword skill selector).
+- Installs are copied to `$SWAG_HOME/plugins/<name>/` and recorded in
+  `registry.json`. Install shows permissions and asks an `ApprovalPrompter`.
+
+`docs/PLUGINS.md` is the authoring guide.
 
 ## CLI
 
-`swag plugin list`, `swag plugin show`, and `swag plugin validate`. Add further subcommands on this Typer app. Keep the group name `plugin`.
+`swag plugin list|install|enable|disable|remove|info|show|validate`
 
-## Status
-
-Stub. The commands exit 2.
+`swag skill list`
