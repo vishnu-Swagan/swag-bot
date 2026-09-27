@@ -9,8 +9,10 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from swag_bot.core.engine import WorkflowEngine, build_engine
+from swag_bot.core.evidence import EvidenceLedger, current_attempt
 from swag_bot.core.executor import StepExecutor
 from swag_bot.core.planner import Planner
 from swag_bot.core.summary import render_record, summarize
@@ -98,6 +100,9 @@ class PlanDoVerifyLoop:
         engine: str = "python",
         graphbit_module: object | None = None,
         on_event: Callable[[LoopEvent], None] | None = None,
+        action_sink: Callable[[ActionLogEntry], None] | None = None,
+        evidence_dir: Path | None = None,
+        evidence_enabled: bool = True,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
@@ -115,6 +120,10 @@ class PlanDoVerifyLoop:
         self.max_attempts = max_attempts
         self.concurrency = concurrency
         self.on_event = on_event
+        self.action_sink = action_sink
+        self.evidence_dir = evidence_dir
+        self.evidence_enabled = evidence_enabled
+        self.ledger = EvidenceLedger(directory=evidence_dir)
         if tools is None:
             tools = InMemoryToolRegistry()
         register_builtin_tools(tools, sandbox)
@@ -150,11 +159,13 @@ class PlanDoVerifyLoop:
         self._notes.clear()
         self._replans = 0
         self._plan = None
+        self.ledger = EvidenceLedger(directory=self.evidence_dir)
 
         names = [tool.name for tool in self.tools.list_tools()]
         planner = Planner(self._llm, model=self.model, tool_names=names, context=context)
         plan = planner.create(goal, max_steps=self.max_steps)
         self._plan = plan
+        self.ledger.set_run(plan.id, plan.goal)
         self._emit(LoopEvent(kind="plan", plan=plan))
         if dry_run:
             self.summary_text = summarize(self._llm, plan, {}, model=self.model, dry_run=True)
@@ -169,8 +180,18 @@ class PlanDoVerifyLoop:
             model=self.model,
             on_action=self._record,
             on_tool=self._on_tool,
+            ledger=self.ledger,
         )
-        verifier = Verifier(self._llm, model=self.model)
+        verifier = Verifier(
+            self._llm,
+            model=self.model,
+            sandbox=self.sandbox,
+            ledger=self.ledger,
+            policy=self.policy,
+            prompter=self.prompter,
+            on_action=self._record,
+            grounded=self.evidence_enabled,
+        )
         while True:
             self.engine.run(
                 plan,
@@ -198,35 +219,55 @@ class PlanDoVerifyLoop:
         feedback: str | None = None
         try:
             for attempt in range(1, self.max_attempts + 1):
-                step.status = StepStatus.DOING
-                self._emit_status(step)
-                result = executor.execute(step, attempt=attempt, feedback=feedback)
-                if result.observation:
-                    self._emit(
-                        LoopEvent(
-                            kind="output",
-                            plan=self._require_plan(),
-                            step_id=step.id,
-                            text=result.observation,
-                        )
-                    )
-                step.status = StepStatus.VERIFYING
-                self._emit_status(step)
-                verdict = verifier.check(step, result)
-                if verdict.passed:
-                    step.status = StepStatus.DONE
-                    result.status = StepStatus.DONE
-                    result.verified = True
-                    self._store(result)
-                    self._remember(step, result)
+                token = current_attempt.set(attempt)
+                try:
+                    step.status = StepStatus.DOING
                     self._emit_status(step)
-                    return
-                feedback = verdict.reason
-                if verdict.replan or attempt >= self.max_attempts:
-                    self._fail(step, result, verdict.reason, replan=verdict.replan)
-                    return
+                    result = executor.execute(step, attempt=attempt, feedback=feedback)
+                    if result.observation:
+                        self._emit(
+                            LoopEvent(
+                                kind="output",
+                                plan=self._require_plan(),
+                                step_id=step.id,
+                                text=result.observation,
+                            )
+                        )
+                    step.status = StepStatus.VERIFYING
+                    self._emit_status(step)
+                    verdict = verifier.check(step, result)
+                    result.evidence_ids = list(verdict.evidence_ids)
+                    result.check_results = list(verdict.check_results)
+                    if verdict.passed and (verdict.evidence_ids or not self.evidence_enabled):
+                        step.status = StepStatus.DONE
+                        result.status = StepStatus.DONE
+                        result.verified = True
+                        self._store(result)
+                        self._remember(step, result)
+                        self._emit_status(step)
+                        return
+                    if self.evidence_enabled and (verdict.unverified or verdict.passed):
+                        feedback = verdict.reason
+                        if attempt >= self.max_attempts:
+                            self._unverified(step, result, verdict.reason)
+                            return
+                        continue
+                    feedback = verdict.reason
+                    if verdict.replan or attempt >= self.max_attempts:
+                        self._fail(step, result, verdict.reason, replan=verdict.replan)
+                        return
+                finally:
+                    current_attempt.reset(token)
         finally:
             self._local.step_id = None
+
+    def _unverified(self, step: Step, result: StepResult, reason: str) -> None:
+        step.status = StepStatus.UNVERIFIED
+        result.status = StepStatus.UNVERIFIED
+        result.error = reason
+        result.verified = False
+        self._store(result)
+        self._emit_status(step)
 
     def _fail(self, step: Step, result: StepResult, reason: str, *, replan: bool) -> None:
         step.status = StepStatus.FAILED
@@ -287,8 +328,14 @@ class PlanDoVerifyLoop:
             return
 
     def _record(self, entry: ActionLogEntry) -> None:
+        plan = self._plan
+        if plan is not None and entry.run_id is None:
+            entry = entry.model_copy(update={"run_id": plan.id})
         with self._log_lock:
             self.action_log.append(entry)
+            self.ledger.add_action(entry)
+        if self.action_sink is not None:
+            self.action_sink(entry)
 
     def _on_tool(self, text: str) -> None:
         step_id = getattr(self._local, "step_id", None)

@@ -171,11 +171,16 @@ An empty query returns nothing. `get` returns None when the id is missing.
 content and metadata values, newest match first.
 
 `TaskPlan` holds `Step`s. Status values: `pending`, `doing`, `verifying`,
-`done`, `failed`, `skipped`. `done` means the step ran and the check passed.
-Step ids are unique, and `depends_on` may only name steps in the same plan.
-`StepResult` is the outcome of one step. `AgentLoop.run(goal)` returns the
-plan. `PlanDoVerifyLoop` in `core/loop.py` is the implementation. `swag run`
-passes recalled memories and selected skill instructions in as planner context.
+`done`, `failed`, `unverified`, `skipped`. `done` means the step ran and a
+check passed with cited evidence. `unverified` means a pass was claimed
+without evidence. Step ids are unique, and `depends_on` may only name steps
+in the same plan. `StepResult` is the outcome of one step and may carry
+`evidence_ids` and `check_results`. `Step.checks` holds machine-checkable
+acceptance checks. The shapes are the Evidence Contract in
+`docs/spec/evidence-contract.md` (`Check`, `CheckResult`, `Evidence`,
+`RunRecord`). `AgentLoop.run(goal)` returns the plan. `PlanDoVerifyLoop` in
+`core/loop.py` is the implementation. `swag run` passes recalled memories
+and selected skill instructions in as planner context.
 
 ### MCP
 

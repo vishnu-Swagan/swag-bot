@@ -88,6 +88,14 @@ def test_swag_run_selects_a_skill_saves_memory_and_writes_summary(
                         "title": "Triage the issue",
                         "instruction": "Read the skill and draft a reply",
                         "success_criteria": "a reply was drafted",
+                        "checks": [
+                            {
+                                "id": "noted",
+                                "kind": "command",
+                                "command": "true",
+                                "expected_exit": 0,
+                            }
+                        ],
                     }
                 ]
             ),

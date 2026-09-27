@@ -36,6 +36,12 @@ from swag_bot.errors import SandboxError
 # command exceeds ``timeout`` so callers do not have to catch a special error.
 TIMEOUT_EXIT_CODE = 124
 
+# Evidence Contract. The prose spec is ``docs/spec/evidence-contract.md``.
+# Skill learning, replay, and jury features should read that file and these
+# models rather than inventing a second ledger shape.
+EVIDENCE_CONTRACT_SPEC = "swag-evidence-contract"
+EVIDENCE_CONTRACT_VERSION = "1.0"
+
 _SKILL_NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
@@ -713,6 +719,11 @@ class ActionLogEntry(BaseModel):
     approved: bool
     approver: str
     outcome: str | None = None
+    # Set when this action produced an ``Evidence`` record in the same run.
+    evidence_id: str | None = None
+    # Plan id of the run that recorded the action. Empty for entries written
+    # outside a run. ``swag safety log`` reads the home index of these rows.
+    run_id: str | None = None
 
     @field_validator("approver")
     @classmethod
@@ -768,12 +779,131 @@ class MemoryStore(Protocol):
 # ---------------------------------------------------------------------------
 
 
+class Check(BaseModel):
+    """One machine-checkable acceptance check for a plan step.
+
+    ``kind`` is an open string so a newer writer does not make an older reader
+    reject the plan. The reference runner in ``core/checks.py`` implements
+    ``file_exists``, ``file_contains``, ``file_absent``, ``command``,
+    ``exit_code``, and ``json_schema`` (see the Evidence Contract). An unknown
+    kind fails that check at run time.
+
+    ``schema`` in JSON is accepted as an alias of ``json_schema``.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    id: str = ""
+    kind: str
+    description: str = ""
+    path: str | None = None
+    command: str | None = None
+    contains: str | None = None
+    expected_exit: int | None = None
+    json_schema: dict[str, Any] | None = None
+    timeout: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _schema_alias(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "schema" in value and "json_schema" not in value:
+            data = dict(value)
+            data["json_schema"] = data.pop("schema")
+            return data
+        return value
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("check kind must not be empty")
+        return text
+
+    @field_validator("expected_exit", mode="before")
+    @classmethod
+    def _expected_exit(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            text = value.strip()
+            if text.lstrip("-").isdigit():
+                return int(text)
+        return value
+
+
+class CheckResult(BaseModel):
+    """Outcome of one acceptance check. ``evidence_ids`` cite the ledger."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    check_id: str
+    passed: bool
+    evidence_ids: list[str] = Field(default_factory=list)
+    detail: str = ""
+
+
+class Evidence(BaseModel):
+    """One fact in a run's evidence ledger.
+
+    Stdout, stderr, and file bodies are stored as blob files. The ``*_sha256``
+    fields are the hex SHA-256 of those stored bytes. ``preview`` is a short
+    redacted excerpt. ``stdout``, ``stderr``, and ``content`` are in-memory
+    only and are omitted from ``run.jsonl``.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=lambda: f"ev-{uuid4().hex[:12]}")
+    kind: str
+    step_id: str | None = None
+    attempt: int | None = None
+    tool: str | None = None
+    summary: str = ""
+    exit_code: int | None = None
+    stdout_sha256: str | None = None
+    stderr_sha256: str | None = None
+    content_sha256: str | None = None
+    stdout_blob: str | None = None
+    stderr_blob: str | None = None
+    content_blob: str | None = None
+    path: str | None = None
+    ok: bool | None = None
+    detail: str = ""
+    preview: str = ""
+    duration_ms: int | None = None
+    truncated: bool = False
+    created_at: datetime = Field(default_factory=_utcnow)
+    stdout: str = Field(default="", exclude=True)
+    stderr: str = Field(default="", exclude=True)
+    content: str = Field(default="", exclude=True)
+
+
+class RunRecord(BaseModel):
+    """One JSON line of a per-run ``run.jsonl`` file.
+
+    ``record`` is ``header``, ``evidence``, ``action``, or ``check``.
+    Only the payload that matches ``record`` is set.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    record: str
+    version: str | None = None
+    spec: str | None = None
+    run_id: str | None = None
+    goal: str | None = None
+    evidence: Evidence | None = None
+    action: ActionLogEntry | None = None
+    check: CheckResult | None = None
+
+
 class StepStatus(StrEnum):
     """Where a plan step is in the plan-do-verify loop.
 
-    ``done`` means the step ran and its check passed. ``failed`` means the
-    work or the check failed. ``skipped`` means a dependency failed or the
-    planner dropped the step.
+    ``done`` means the step ran and a check passed with cited evidence.
+    ``failed`` means the work or an acceptance check failed. ``unverified``
+    means a pass was claimed without evidence the harness could cite.
+    ``skipped`` means a dependency did not succeed or the planner dropped
+    the step.
     """
 
     PENDING = "pending"
@@ -781,6 +911,7 @@ class StepStatus(StrEnum):
     VERIFYING = "verifying"
     DONE = "done"
     FAILED = "failed"
+    UNVERIFIED = "unverified"
     SKIPPED = "skipped"
 
 
@@ -792,6 +923,7 @@ class Step(BaseModel):
     instruction: str = ""
     status: StepStatus = StepStatus.PENDING
     depends_on: list[str] = Field(default_factory=list)
+    checks: list[Check] = Field(default_factory=list)
 
     @field_validator("id", "title")
     @classmethod
@@ -809,6 +941,8 @@ class StepResult(BaseModel):
     observation: str = ""
     error: str | None = None
     verified: bool = False
+    evidence_ids: list[str] = Field(default_factory=list)
+    check_results: list[CheckResult] = Field(default_factory=list)
 
 
 class TaskPlan(BaseModel):
@@ -952,7 +1086,12 @@ __all__ = [
     "AutonomyLevel",
     "ChatChunk",
     "ChatResponse",
+    "EVIDENCE_CONTRACT_SPEC",
+    "EVIDENCE_CONTRACT_VERSION",
+    "Check",
+    "CheckResult",
     "CommandResult",
+    "Evidence",
     "ExperimentalComponents",
     "GrantStore",
     "LLMClient",
@@ -971,6 +1110,7 @@ __all__ = [
     "PluginRegistry",
     "RiskLevel",
     "Role",
+    "RunRecord",
     "Sandbox",
     "Skill",
     "SkillMeta",
