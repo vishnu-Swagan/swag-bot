@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from swag_bot.core.engine import WorkflowEngine, build_engine
+from swag_bot.core.escalation import EscalationController
 from swag_bot.core.evidence import EvidenceLedger, current_attempt
 from swag_bot.core.executor import StepExecutor
 from swag_bot.core.handoff import StepManifest, changed_files, render_handoff, snapshot_text_files
@@ -122,6 +123,7 @@ class PlanDoVerifyLoop:
         evidence_enabled: bool = True,
         undo: UndoController | None = None,
         taint: TaintTracker | None = None,
+        escalation: EscalationController | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
@@ -147,6 +149,7 @@ class PlanDoVerifyLoop:
         self.ledger = EvidenceLedger(directory=evidence_dir)
         self.undo = undo
         self.taint = taint
+        self.escalation = escalation
         if tools is None:
             tools = InMemoryToolRegistry()
         register_builtin_tools(tools, sandbox)
@@ -204,6 +207,8 @@ class PlanDoVerifyLoop:
                 LoopEvent(kind="plan_fallback", plan=plan, text=planner.fallback_reason)
             )
         self._emit(LoopEvent(kind="plan", plan=plan))
+        if self.escalation is not None:
+            self.escalation.bind_goal(goal)
         if dry_run:
             self.summary_text = summarize(self._llm, plan, {}, model=self.model, dry_run=True)
             return plan
@@ -222,6 +227,7 @@ class PlanDoVerifyLoop:
             memory_mode=self.memory_mode,
             ledger=self.ledger,
             taint=self.taint,
+            escalation=self.escalation,
         )
         verifier = Verifier(
             self._llm,
@@ -264,6 +270,9 @@ class PlanDoVerifyLoop:
             for attempt in range(1, self.max_attempts + 1):
                 token = current_attempt.set(attempt)
                 try:
+                    stop, feedback = self._gate_step(step, attempt, feedback)
+                    if stop:
+                        return
                     step.status = StepStatus.DOING
                     self._emit_status(step)
                     if self.undo is not None:
@@ -274,6 +283,8 @@ class PlanDoVerifyLoop:
                         feedback=feedback,
                         handoff=self._handoff_for(step),
                     )
+                    if self.escalation is not None:
+                        self.escalation.note_observation(step.id, result.observation)
                     if result.observation:
                         self._emit(
                             LoopEvent(
@@ -286,6 +297,8 @@ class PlanDoVerifyLoop:
                     step.status = StepStatus.VERIFYING
                     self._emit_status(step)
                     verdict = verifier.check(step, result)
+                    if self.escalation is not None:
+                        self.escalation.note_verdict(step.id, verdict.passed, verdict.reason)
                     result.evidence_ids = list(verdict.evidence_ids)
                     result.check_results = list(verdict.check_results)
                     if verdict.passed and (verdict.evidence_ids or not self.evidence_enabled):
@@ -323,6 +336,46 @@ class PlanDoVerifyLoop:
         result.verified = False
         self._store(result)
         self._emit_status(step)
+
+    def _gate_step(
+        self,
+        step: Step,
+        attempt: int,
+        feedback: str | None,
+    ) -> tuple[bool, str | None]:
+        """Return ``(stop, feedback)``.
+
+        ``stop`` is true only when the user gave no answer to an uncertainty
+        question. The step is already marked failed in that case. Feedback
+        stays None on a first attempt that does not escalate.
+        """
+        if self.escalation is None:
+            return False, feedback
+        estimate = self.escalation.estimate(step, attempt=attempt)
+        if not estimate.should_escalate:
+            return False, feedback
+        self._emit(
+            LoopEvent(
+                kind="clarify",
+                plan=self._require_plan(),
+                step_id=step.id,
+                text=estimate.question,
+            )
+        )
+        answer = self.escalation.ask(estimate, step)
+        if not answer:
+            reason = f"Stopped to avoid guessing. {estimate.question}"
+            self._fail(
+                step,
+                StepResult(step_id=step.id, status=StepStatus.FAILED, error=reason),
+                reason,
+                replan=False,
+            )
+            return True, feedback
+        note = f"The user answered: {answer}\nFollow that answer. Do not guess beyond it."
+        if feedback:
+            return False, f"{feedback}\n\n{note}"
+        return False, note
 
     def _fail(self, step: Step, result: StepResult, reason: str, *, replan: bool) -> None:
         step.status = StepStatus.FAILED

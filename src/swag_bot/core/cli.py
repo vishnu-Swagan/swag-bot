@@ -7,6 +7,7 @@ those packages.
 
 from __future__ import annotations
 
+import importlib
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -15,9 +16,10 @@ from typing import Annotated, Any
 
 import typer
 
-from swag_bot.config import Settings, TaintMode, load_settings
+from swag_bot.config import EscalationSettings, Settings, TaintMode, load_settings
 from swag_bot.core.artifacts import default_output_dir, write_run_artifacts
 from swag_bot.core.display import PromptSuspender, RunProgress, TaskListView
+from swag_bot.core.escalation import EscalationController, build_escalation
 from swag_bot.core.fallbacks import FallbackMemory, FallbackPolicy, FallbackPrompter
 from swag_bot.core.fallbacks import LocalSandbox as FallbackSandbox
 from swag_bot.core.loop import LoopEvent, PlanDoVerifyLoop
@@ -28,12 +30,18 @@ from swag_bot.core.memory_journal import (
     provenance_metadata,
     recall_lines,
 )
+from swag_bot.core.reversibility import (
+    ReversibilityClassifier,
+    StubReversibilityClassifier,
+    adapt_classifier,
+)
 from swag_bot.core.tools import register_builtin_tools
-from swag_bot.errors import NotImplementedYet, SwagError
+from swag_bot.errors import ConfigError, NotImplementedYet, SwagError
 from swag_bot.interfaces import (
     ActionLogEntry,
     ApprovalPrompter,
     AutonomyLevel,
+    LLMClient,
     MCPServerSpec,
     MemoryItem,
     MemoryStore,
@@ -51,6 +59,7 @@ from swag_bot.mcp.config import load_mcp_servers
 from swag_bot.mcp.registry import compensation_annotation
 from swag_bot.memory import build_memory_store
 from swag_bot.models import build_llm_client
+from swag_bot.models.factory import split_provider_model
 from swag_bot.plugins import build_registry
 from swag_bot.registry import InMemoryToolRegistry
 from swag_bot.safety import (
@@ -136,6 +145,16 @@ def run(
             help="Taint firewall: escalate (ask, show the source), block, or off.",
         ),
     ] = None,
+    escalate: Annotated[
+        bool | None,
+        typer.Option(
+            "--escalate/--no-escalate",
+            help=(
+                "Ask a clarifying question when a step is uncertain, and require a "
+                "jury before an irreversible action. Overrides escalation.enabled."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Plan, do, and verify a multi-step task."""
     if not goal.strip():
@@ -168,6 +187,7 @@ def run(
                 display=view,
                 evidence=evidence,
                 taint_mode=taint_mode,
+                escalate=escalate,
             )
     except (ValueError, SwagError) as exc:
         view.print_final()
@@ -200,6 +220,7 @@ def execute_goal(
     display: TaskListView | None = None,
     evidence: bool | None = None,
     taint_mode: str | None = None,
+    escalate: bool | None = None,
 ) -> GoalResult:
     """Run one goal with the configured model, sandbox, policy, tools, and memory.
 
@@ -269,6 +290,7 @@ def execute_goal(
         announce=announce,
         mode=active.memory.mode,
     )
+    escalation = _escalation(active, llm, destination, escalate=escalate, announce=announce)
 
     try:
         evidence_enabled = active.evidence.enabled if evidence is None else evidence
@@ -296,6 +318,7 @@ def execute_goal(
             evidence_enabled=evidence_enabled,
             undo=undo,
             taint=tracker,
+            escalation=escalation,
         )
     except (ValueError, SwagError):
         if mcp_client is not None:
@@ -428,6 +451,94 @@ def _prompter(settings: Settings) -> ApprovalPrompter:
         return build_prompter(settings)
     except NotImplementedYet:
         return FallbackPrompter()
+
+
+def _escalation(
+    settings: Settings,
+    llm: LLMClient,
+    workdir: Path,
+    *,
+    escalate: bool | None,
+    announce: Callable[[str], None] | None,
+) -> EscalationController | None:
+    """Build the uncertainty gate when this run asked for it.
+
+    ``escalate`` True or False overrides ``escalation.enabled``. None keeps
+    the config value, which defaults to off.
+    """
+    chosen = _escalation_settings(settings.escalation, escalate)
+    if not chosen.enabled:
+        return None
+    label = f"{settings.model.provider}/{settings.model.model}"
+    return build_escalation(
+        chosen,
+        llm=llm,
+        judges=_judges(settings, llm, announce),
+        classifier=_reversibility_classifier(workdir),
+        session_label=label,
+    )
+
+
+def _reversibility_classifier(workdir: Path) -> ReversibilityClassifier:
+    """Use the undo ledger's classifier when it has landed, else the stub."""
+    try:
+        module = importlib.import_module("swag_bot.safety.reversibility")
+    except ImportError:
+        return StubReversibilityClassifier()
+    return adapt_classifier(getattr(module, "classify_reversibility", None), workdir)
+
+
+def _escalation_settings(settings: EscalationSettings, escalate: bool | None) -> EscalationSettings:
+    if escalate is None:
+        return settings
+    return settings.model_copy(update={"enabled": escalate})
+
+
+def _judges(
+    settings: Settings,
+    llm: LLMClient,
+    announce: Callable[[str], None] | None,
+) -> list[tuple[str, LLMClient]]:
+    """Judge clients from ``escalation.judges``. Empty means the session model.
+
+    A judge that cannot be built is skipped. If every judge fails, the session
+    model is used so a single local model still runs the panel.
+    """
+    specs = settings.escalation.judges
+    if not specs:
+        return []
+    built: list[tuple[str, LLMClient]] = []
+    for spec in specs:
+        try:
+            provider, model = split_provider_model(spec)
+        except ConfigError as exc:
+            _warn(announce, f"skipping jury judge {spec!r}: {exc}")
+            continue
+        try:
+            client = build_llm_client(
+                settings.model_copy(
+                    update={
+                        "model": settings.model.model_copy(
+                            update={"provider": provider, "model": model, "api_base": None}
+                        )
+                    }
+                )
+            )
+        except Exception as exc:
+            _warn(announce, f"skipping jury judge {spec!r}: {exc}")
+            continue
+        built.append((f"{provider}/{model}", client))
+    if not built:
+        _warn(announce, "no jury judges could be built; using the session model")
+    return built
+
+
+def _warn(announce: Callable[[str], None] | None, message: str) -> None:
+    text = f"warning: {message}"
+    if announce is not None:
+        announce(text)
+    else:
+        print(text, file=sys.stderr)
 
 
 def _plugins(settings: Settings) -> PluginRegistry | None:

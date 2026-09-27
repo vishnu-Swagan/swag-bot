@@ -35,7 +35,18 @@ def test_help_lists_run_options() -> None:
     assert result.exit_code == 0
     text = _visible(result)
     assert "\x1b" not in text
-    for name in ("--autonomy", "--model", "--output-dir", "--max-steps", "--dry-run", "--evidence"):
+    for name in (
+        "--autonomy",
+        "--model",
+        "--output-dir",
+        "--max-steps",
+        "--dry-run",
+        "--evidence",
+        "--escalate",
+        "--taint-mode",
+        "--strict-plan",
+        "--memory-mode",
+    ):
         assert name in text
 
 

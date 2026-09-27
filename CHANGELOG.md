@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reversibility. Actions are `reversible`, `compensable`, or `irreversible`. Plugins and MCP tools can declare an inverse (`compensations` in `plugin.json`, or `swagCompensation` on an MCP tool). Undo runs those inverses in reverse when a callable is registered, and lists irreversible actions it cannot restore.
 - Autonomy `ask-irreversible`. Prompts only at the point of no return. The default remains `ask-risky`, which still prompts for writes and shell commands. Irreversible actions are marked in the approval prompt.
 - Taint firewall for tool output. Web pages, MCP results, plugin output, and files from outside the workspace are labeled untrusted. Those labels cannot by themselves drive network, destructive, credential, or send actions. `swag run --taint-mode escalate|block|off`. See `docs/TAINT.md`.
+- Opt-in uncertainty escalation (`escalation.enabled`, or `swag run --escalate`). An uncertain step asks a specific question and stops if you do not answer. Irreversible actions can require a small jury. A single local model is enough. The jury uses `safety.reversibility`. See `docs/ESCALATION.md`.
 
 ## [0.1.0] - 2026-09-27
 

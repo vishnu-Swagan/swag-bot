@@ -37,6 +37,14 @@ Example ``config.toml``::
     workspace = "trusted"
     memory = "trusted"
 
+    [escalation]
+    enabled = false
+    uncertainty_threshold = 0.6
+    samples = 1
+    jury = true
+    jury_size = 3
+    judges = []
+
 Known ``model.provider`` values: ``ollama`` (default), ``litellm``,
 ``openai``, ``anthropic``. The string is open so a new provider does not
 require a schema change. ``memory.backend`` defaults to ``memory``, which
@@ -174,6 +182,39 @@ class TaintSettings(BaseModel):
     memory: TrustLevel = TrustLevel.TRUSTED
 
 
+class EscalationSettings(BaseModel):
+    """Uncertainty questions and a jury before irreversible actions.
+
+    ``enabled`` defaults to false, so a normal run does not ask extra questions
+    or call extra models. ``samples`` is 1, which skips self-consistency calls.
+    ``jury`` applies only when ``enabled`` is true. An empty ``judges`` list
+    reuses the session model with separate prompts. See ``docs/ESCALATION.md``.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = False
+    uncertainty_threshold: float = 0.6
+    samples: int = 1
+    jury: bool = True
+    jury_size: int = 3
+    judges: list[str] = Field(default_factory=list)
+
+    @field_validator("uncertainty_threshold")
+    @classmethod
+    def _threshold(cls, value: float) -> float:
+        if value < 0.0 or value > 1.0:
+            raise ValueError("escalation.uncertainty_threshold must be between 0 and 1")
+        return float(value)
+
+    @field_validator("samples", "jury_size")
+    @classmethod
+    def _panel_size(cls, value: int) -> int:
+        if value < 1 or value > 5:
+            raise ValueError("escalation.samples and escalation.jury_size must be from 1 to 5")
+        return value
+
+
 class Settings(BaseModel):
     """Top-level ``config.toml``. Unknown keys are ignored so new fields can land later."""
 
@@ -187,6 +228,7 @@ class Settings(BaseModel):
     evidence: EvidenceSettings = Field(default_factory=EvidenceSettings)
     undo: UndoSettings = Field(default_factory=UndoSettings)
     taint: TaintSettings = Field(default_factory=TaintSettings)
+    escalation: EscalationSettings = Field(default_factory=EscalationSettings)
 
 
 def swag_home() -> Path:

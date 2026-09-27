@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from typing import Any
 
+from swag_bot.core.escalation import EscalationController
 from swag_bot.core.evidence import EvidenceLedger
 from swag_bot.core.memory_journal import label_memory
 from swag_bot.core.prompts import EXECUTOR_SYSTEM
@@ -68,6 +69,7 @@ class StepExecutor:
         memory_mode: str = "auto",
         ledger: EvidenceLedger | None = None,
         taint: TaintTracker | None = None,
+        escalation: EscalationController | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -81,6 +83,8 @@ class StepExecutor:
         self.memory_mode = memory_mode
         self.ledger = ledger
         self.taint = taint
+        self.escalation = escalation
+        self._step: Step | None = None
 
     def execute(
         self,
@@ -92,9 +96,11 @@ class StepExecutor:
     ) -> StepResult:
         """Run ``step`` once. ``handoff`` is text from the steps this one depends on."""
         token = _current_step.set(step.id)
+        self._step = step
         try:
             return self._execute(step, attempt=attempt, feedback=feedback, handoff=handoff)
         finally:
+            self._step = None
             _current_step.reset(token)
 
     def _execute(
@@ -181,6 +187,19 @@ class StepExecutor:
         if classified is not action.risk:
             action = action.model_copy(update={"risk": classified})
         action = _stamp_reversibility(self.policy, action)
+
+        blocked = self._jury_block(action)
+        if blocked is not None:
+            self._finish(
+                call,
+                action,
+                arguments,
+                approved=False,
+                approver="jury",
+                outcome=blocked,
+            )
+            self._emit_tool(blocked)
+            return blocked
 
         decision = _apply_taint(_policy_decision(self.policy, action), action)
         if decision == "deny":
@@ -299,6 +318,21 @@ class StepExecutor:
         )
         if self.on_action is not None:
             self.on_action(entry)
+
+    def _jury_block(self, action: ActionRequest) -> str | None:
+        """Refuse an irreversible action the jury rejected. None lets it continue.
+
+        Reversible and compensable actions, and runs with escalation off, return
+        None so the permission policy is unchanged.
+        """
+        escalation = self.escalation
+        step = self._step
+        if escalation is None or step is None:
+            return None
+        block = escalation.review_action(action, step=step)
+        if block is None:
+            return None
+        return block.reason
 
     def _emit_tool(self, text: str) -> None:
         if self.on_tool is not None and text:
