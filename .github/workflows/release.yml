@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  github-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Require the tag to match the package version
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          if not tag.startswith("v"):
+              raise SystemExit(f"tag {tag!r} must look like v0.1.0")
+          version = tag[1:]
+          if not version or version.startswith("."):
+              raise SystemExit(f"tag {tag!r} has no version")
+
+          pyproject = tomllib.loads(Path("pyproject.toml").read_text())
+          package = pyproject["project"]["version"]
+          if version != package:
+              raise SystemExit(
+                  f"tag {tag} does not match pyproject.toml version {package}"
+              )
+
+          init = Path("src/swag_bot/__init__.py").read_text()
+          needle = f'__version__ = "{version}"'
+          if needle not in init:
+              raise SystemExit(f"{needle!r} not found in src/swag_bot/__init__.py")
+          PY
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install -U pip build twine
+          python -m build
+          twine check dist/*
+      - name: Upload distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/*
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag
+
+  # Opt-in. With PUBLISH_PYPI unset, this job is skipped and the GitHub
+  # Release above still succeeds. A missing token also skips the upload
+  # instead of failing the workflow.
+  publish-pypi:
+    needs: github-release
+    if: ${{ vars.PUBLISH_PYPI == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [ -z "${TWINE_PASSWORD}" ]; then
+            echo "PUBLISH_PYPI is true but PYPI_API_TOKEN is unset. Skipping PyPI upload."
+            exit 0
+          fi
+          python -m pip install -U pip twine
+          twine upload dist/*

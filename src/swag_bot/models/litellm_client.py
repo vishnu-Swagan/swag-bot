@@ -11,7 +11,7 @@ from __future__ import annotations
 import importlib
 import json
 from collections.abc import Callable, Iterator, Sequence
-from typing import Any
+from typing import Any, cast
 
 from pydantic import ValidationError
 
@@ -209,7 +209,8 @@ def _load_litellm_completion() -> CompletionFn:
     completion = getattr(litellm, "completion", None)
     if completion is None:
         raise ModelError(_INSTALL_HINT)
-    return completion
+    # importlib + getattr is Any. The callable is the LiteLLM completion function.
+    return cast(CompletionFn, completion)
 
 
 def _openai_message(message: Message) -> dict[str, Any]:

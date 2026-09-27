@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 
 from swag_bot.config import Settings, swag_home
 from swag_bot.interfaces import (
@@ -224,7 +225,8 @@ def _take_named(plugin: Plugin, loader_name: str, list_name: str, name: str) -> 
     loader = getattr(plugin, loader_name, None)
     if callable(loader):
         try:
-            return loader(name)
+            # getattr on the Plugin protocol is Any. Callers only need object.
+            return cast(object, loader(name))
         except KeyError:
             return None
     lister = getattr(plugin, list_name, None)
@@ -232,5 +234,5 @@ def _take_named(plugin: Plugin, loader_name: str, list_name: str, name: str) -> 
         return None
     for item in lister():
         if getattr(item, "name", None) == name:
-            return item
+            return cast(object, item)
     return None

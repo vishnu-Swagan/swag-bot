@@ -22,12 +22,18 @@ default, and it does not need an API key.
 
 ## Install
 
-Python 3.11 or newer.
+Python 3.11 or newer. The package version for this release is 0.1.0.
 
-From Git, with pip:
+From Git, with pip (this tracks the default branch):
 
 ```bash
 python -m pip install "swag-bot @ git+https://github.com/vishnu-Swagan/swag-bot.git"
+```
+
+After the `v0.1.0` tag is pushed, pin that release:
+
+```bash
+python -m pip install "swag-bot @ git+https://github.com/vishnu-Swagan/swag-bot.git@v0.1.0"
 ```
 
 With pipx, so the `swag` command is isolated from the rest of your Python:
@@ -36,7 +42,13 @@ With pipx, so the `swag` command is isolated from the rest of your Python:
 pipx install "swag-bot @ git+https://github.com/vishnu-Swagan/swag-bot.git"
 ```
 
-Optional extras:
+PyPI publishing is opt-in. A `v*` tag builds the package and creates a GitHub
+Release either way. The workflow uploads to PyPI only when the repository
+variable `PUBLISH_PYPI` is `true` and the `PYPI_API_TOKEN` secret is set.
+Until then, install from Git. Once publishing is on, `python -m pip install swag-bot`
+installs the same release.
+
+Optional extras (add `@v0.1.0` to the URL to pin the release):
 
 ```bash
 python -m pip install "swag-bot[models] @ git+https://github.com/vishnu-Swagan/swag-bot.git"
