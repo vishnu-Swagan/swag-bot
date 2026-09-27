@@ -110,6 +110,20 @@ def test_off_does_not_write() -> None:
     assert store.search("hidden") == []
 
 
+def test_run_summary_recall_stays_short() -> None:
+    store = InMemoryMemoryStore()
+    item = store.add(
+        "# Summary\n\nGoal: write a note\n\n## Steps\n\n- write done\n",
+        metadata=provenance_metadata(run_id="run-9", kind="run-summary", goal="write a note"),
+    )
+    line = recall_lines([item])[0]
+    assert line.startswith("recalled: run summary for write a note")
+    assert "# Summary" not in line
+    assert "run run-9" in line
+    assert "evidence none" in line
+    assert store.search("Steps")[0].content.startswith("# Summary")
+
+
 def test_old_memory_without_provenance_says_so() -> None:
     store = InMemoryMemoryStore()
     item = store.add("plain fact")

@@ -58,8 +58,12 @@ def provenance_metadata(
 
 
 def label_memory(item: MemoryItem) -> str:
-    """One line of content plus whatever provenance the record actually has."""
-    body = " ".join(item.content.split())
+    """One line of content plus whatever provenance the record actually has.
+
+    A run summary is stored in full, but recall shows the goal and provenance
+    only. Pasting the saved ``# Summary`` record back into the next plan
+    repeated that heading.
+    """
     meta = item.metadata
     bits: list[str] = []
     kind = str(meta.get("kind") or "")
@@ -77,6 +81,12 @@ def label_memory(item: MemoryItem) -> str:
             bits.append("evidence " + ", ".join(str(entry) for entry in evidence))
         else:
             bits.append("evidence none")
+    if kind == "run-summary":
+        body = f"run summary for {str(meta.get('goal') or 'the goal')}"
+    else:
+        body = " ".join(item.content.split())
+        if len(body) > 240:
+            body = body[:237] + "..."
     if not bits:
         return f"{body} (no provenance)"
     return f"{body} ({', '.join(bits)})"
@@ -93,19 +103,7 @@ def remembered_text(item: MemoryItem) -> str:
     A run summary is stored in full, but the visible line stays short so the
     summary file does not repeat its own ``# Summary`` heading.
     """
-    if str(item.metadata.get("kind") or "") == "run-summary":
-        goal = str(item.metadata.get("goal") or "the goal")
-        run_id = str(item.metadata.get("run_id") or "")
-        where = f", run {run_id}" if run_id else ""
-        evidence = "evidence none"
-        raw = item.metadata.get("evidence_ids") or []
-        if isinstance(raw, list) and raw:
-            evidence = "evidence " + ", ".join(str(entry) for entry in raw)
-        return f"remembered: run summary for {goal} (run-summary{where}, {evidence})"
-    preview = label_memory(item)
-    if len(preview) > 240:
-        preview = preview[:237] + "..."
-    return f"remembered: {preview}"
+    return f"remembered: {label_memory(item)}"
 
 
 def commit_memory(
