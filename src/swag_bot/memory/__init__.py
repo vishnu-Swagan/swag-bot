@@ -1,20 +1,22 @@
 """Pluggable memory store.
 
 Owned by the models and memory agent, together with ``swag_bot.models``.
-See ``README.md`` in this directory.
+See ``README.md`` in this directory and ``docs/MODELS.md``.
 """
 
 from __future__ import annotations
 
-from swag_bot.config import Settings
-from swag_bot.errors import NotImplementedYet
-from swag_bot.interfaces import MemoryStore
+from swag_bot.memory.agentmemory import AgentMemoryStore
 from swag_bot.memory.cli import app
+from swag_bot.memory.factory import build_memory_store, get_memory_store
+from swag_bot.memory.json_store import JsonFileMemoryStore
+from swag_bot.memory.sqlite import SQLiteMemoryStore
 
-
-def build_memory_store(settings: Settings) -> MemoryStore:
-    """Store selected by ``settings.memory.backend``. Stub."""
-    raise NotImplementedYet("memory.build_memory_store")
-
-
-__all__ = ["app", "build_memory_store"]
+__all__ = [
+    "AgentMemoryStore",
+    "JsonFileMemoryStore",
+    "SQLiteMemoryStore",
+    "app",
+    "build_memory_store",
+    "get_memory_store",
+]

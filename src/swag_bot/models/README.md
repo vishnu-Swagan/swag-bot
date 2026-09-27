@@ -4,24 +4,19 @@
 
 **Edit only:** `src/swag_bot/models/`, `src/swag_bot/memory/`, `tests/models/`, and `tests/memory/`.
 
-Read `docs/ARCHITECTURE.md` before touching a shared file. `interfaces.py` changes stay additive.
+Read `docs/ARCHITECTURE.md` and `docs/MODELS.md` before touching a shared file. `interfaces.py` changes stay additive. This slice did not change `interfaces.py`.
 
-## What goes here
+## What is here
 
-`LLMClient` implementations selected by `settings.model.provider` and `settings.model.model`.
+`get_llm_client(config)` returns an `LLMClient`:
 
-- `ollama` is the default. Talk to `OLLAMA_HOST` (default `http://127.0.0.1:11434`) or `settings.model.api_base` when it is set.
-- `litellm` covers multi-provider routing. It stays an optional extra (`pip install -e ".[models]"`).
-- Direct bring-your-own-key clients for OpenAI and Anthropic read `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` from the environment. Never read a key from `config.toml`, never log one, never put one in an `ActionRequest`.
-- Implement `StreamingLLMClient` only when the provider streams. Otherwise raise `NotImplementedError` from any stream method you add, and do not pretend to stream.
-- `build_llm_client(settings)` in `__init__.py` is what `swag run` will call. Keep the name.
+- `ollama` (the default) talks to `OLLAMA_HOST` or `settings.model.api_base`. No key.
+- `openai`, `anthropic`, `gemini`, `openrouter`, and `litellm` go through LiteLLM. Install it with `pip install -e ".[models]"`. Keys stay in the environment (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`).
 
-Parse provider tool-call arguments into the `ToolCall.arguments` dict (the model accepts a JSON string). Map provider messages onto `Message` / `Role`.
+Both clients stream when the provider streams, and both fall back to JSON-in-text tool calls when native tools are unavailable. Tool arguments are always a dict.
+
+`build_llm_client` still raises `NotImplementedYet` so `tests/test_fakes.py` stays green. Call `get_llm_client`.
 
 ## CLI
 
-`swag model list`. Add subcommands on this Typer app.
-
-## Status
-
-Stub. The command exits 2.
+`swag model list`, `swag model test`, and `swag model set <provider/model>`.

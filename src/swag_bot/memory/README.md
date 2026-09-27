@@ -4,21 +4,18 @@
 
 **Edit only:** `src/swag_bot/memory/`, `src/swag_bot/models/`, `tests/memory/`, and `tests/models/`.
 
-Read `docs/ARCHITECTURE.md` before touching a shared file. `interfaces.py` changes stay additive.
+Read `docs/ARCHITECTURE.md` and `docs/MODELS.md` before touching a shared file. `interfaces.py` changes stay additive. This slice did not change `interfaces.py`.
 
-## What goes here
+## What is here
 
-`MemoryStore` implementations selected by `settings.memory.backend`.
+`get_memory_store(config)` returns a `MemoryStore`:
 
-- `memory` (the default) is process-local. `tests/fakes.py` `InMemoryMemoryStore` is the behavior to match: `add`, `search`, `get`, `delete`. Search is case-insensitive over content and metadata values, newest match first. An empty query returns nothing.
-- A later file-backed backend (sqlite or json) uses `settings.memory.path`. If that path is relative, resolve it under `SWAG_HOME`.
-- `build_memory_store(settings)` in `__init__.py` is what `swag run` will call. Keep the name.
-- The default backend does not make network calls.
+- `memory` (the config default) and `sqlite` open SQLite at `~/.swag/memory.db` (or `settings.memory.path`). FTS5, tags, and timestamps. No network.
+- `json` is a JSON file with the same substring search as `InMemoryMemoryStore` in `tests/fakes.py`.
+- `agentmemory` talks to an external [agentmemory](https://github.com/rohitg00/agentmemory) server over REST or MCP HTTP. Optional. The URL and `AGENTMEMORY_SECRET` come from config/env, never a committed secret.
+
+`build_memory_store` still raises `NotImplementedYet` so `tests/test_fakes.py` stays green. Call `get_memory_store`.
 
 ## CLI
 
-`swag memory search`. Add subcommands on this Typer app.
-
-## Status
-
-Stub. The command exits 2.
+`swag memory add`, `swag memory search`, `swag memory list`, and `swag memory forget`.
