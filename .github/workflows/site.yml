@@ -18,6 +18,8 @@ jobs:
   build:
     name: Build site
     runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
     defaults:
       run:
         working-directory: site
@@ -30,6 +32,8 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - name: Install
         run: npm ci
+      - name: Lint
+        run: npm run lint
       - name: Typecheck
         run: npm run typecheck
       - name: Build

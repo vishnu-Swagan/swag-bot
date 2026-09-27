@@ -1,106 +1,105 @@
-import type { Metadata, Viewport } from "next";
-import { Fraunces, IBM_Plex_Mono, Outfit } from "next/font/google";
-import { GITHUB_URL, VERSION } from "@/lib/content";
+import { CommandPalette } from "@/components/shell/command-palette";
+import { Footer } from "@/components/shell/footer";
+import { Nav } from "@/components/shell/nav";
+import { ScrollProgress } from "@/components/shell/scroll-progress";
+import { DESCRIPTION, GITHUB_URL, GITHUB_USER_URL, PRODUCT } from "@/lib/site";
 import { getSiteUrl } from "@/lib/site-url";
+import type { Metadata, Viewport } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
+import type { ReactNode } from "react";
 import "./globals.css";
 
-const display = Fraunces({
+const sans = Geist({
   subsets: ["latin"],
-  weight: ["500", "600", "700"],
-  display: "swap",
-  variable: "--font-fraunces",
+  display: "optional",
+  variable: "--font-geist",
 });
 
-const sans = Outfit({
+const mono = Geist_Mono({
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  display: "swap",
-  variable: "--font-outfit",
+  display: "optional",
+  preload: false,
+  variable: "--font-geist-mono",
 });
 
-const mono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  display: "swap",
-  variable: "--font-plex",
-});
-
-const description =
-  "Free MIT-licensed Python agent. It plans a goal, does the steps, and checks the result. Local models with Ollama, or bring your own key.";
+const siteUrl = getSiteUrl();
 
 export const metadata: Metadata = {
-  metadataBase: new URL(getSiteUrl()),
+  metadataBase: new URL(siteUrl),
   title: {
-    default: "Swag Bot — plans the work, does it, and checks it",
+    default: "Swag Bot — done only when the evidence agrees",
     template: "%s · Swag Bot",
   },
-  description,
+  description: DESCRIPTION,
   applicationName: "Swag Bot",
-  authors: [{ name: "Vishnu M", url: GITHUB_URL }],
-  keywords: [
-    "Swag Bot",
-    "swag",
-    "AI agent",
-    "Ollama",
-    "MCP",
-    "Python",
-    "open source",
-  ],
+  authors: [{ name: PRODUCT.author, url: GITHUB_USER_URL }],
+  keywords: ["Swag Bot", "swag", "AI agent", "Ollama", "MCP", "open source", "MIT"],
   alternates: { canonical: "/" },
   openGraph: {
     type: "website",
     url: "/",
-    title: "Swag Bot — plans the work, does it, and checks it",
-    description,
+    title: "Swag Bot — done only when the evidence agrees",
+    description: DESCRIPTION,
     siteName: "Swag Bot",
+    images: [{ url: "/og?title=Done%20only%20when%20the%20evidence%20agrees", width: 1200, height: 630 }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Swag Bot — plans the work, does it, and checks it",
-    description,
+    title: "Swag Bot — done only when the evidence agrees",
+    description: DESCRIPTION,
+    images: ["/og?title=Done%20only%20when%20the%20evidence%20agrees"],
   },
   robots: { index: true, follow: true },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#110f0c",
+  themeColor: "#09090b",
   width: "device-width",
   initialScale: 1,
 };
 
 const jsonLd = {
   "@context": "https://schema.org",
-  "@type": "SoftwareSourceCode",
+  "@type": "SoftwareApplication",
   name: "Swag Bot",
-  description,
-  version: VERSION,
+  applicationCategory: "DeveloperApplication",
+  operatingSystem: "macOS, Windows, Linux",
+  softwareVersion: PRODUCT.versionLabel,
+  offers: { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  isAccessibleForFree: true,
   license: "https://opensource.org/licenses/MIT",
   codeRepository: GITHUB_URL,
-  programmingLanguage: "Python",
-  runtimePlatform: "Python 3.11+",
-  isAccessibleForFree: true,
-  author: { "@type": "Person", name: "Vishnu M" },
+  url: siteUrl,
+  description: DESCRIPTION,
+  author: { "@type": "Person", name: PRODUCT.author, url: GITHUB_USER_URL },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+const themeBoot = `
+try {
+  var stored = localStorage.getItem("theme");
+  var theme = stored === "light" || stored === "dark" ? stored : "dark";
+  var root = document.documentElement;
+  root.dataset.theme = theme;
+  root.style.colorScheme = theme;
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", theme === "light" ? "#f5f5f2" : "#09090b");
+} catch (e) {}
+`;
+
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html
-      lang="en"
-      className={`${display.variable} ${sans.variable} ${mono.variable}`}
-      suppressHydrationWarning
-    >
+    <html lang="en" className={`${sans.variable} ${mono.variable}`} suppressHydrationWarning>
       <body>
-        <script
-          dangerouslySetInnerHTML={{
-            __html:
-              "try{if(!matchMedia('(prefers-reduced-motion: reduce)').matches){document.documentElement.classList.add('js-motion')}}catch(e){}",
-          }}
-        />
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-        />
-        {children}
+        <script dangerouslySetInnerHTML={{ __html: themeBoot }} />
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+        <a className="skip-link" href="#main">
+          Skip to content
+        </a>
+        <ScrollProgress />
+        <Nav />
+        <CommandPalette />
+        <main id="main">{children}</main>
+        <Footer />
       </body>
     </html>
   );
