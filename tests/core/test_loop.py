@@ -29,7 +29,7 @@ from swag_bot.interfaces import (
 )
 from swag_bot.registry import InMemoryToolRegistry
 from tests.core.support import DenyPrompter, make_loop, plan_json, verdict
-from tests.fakes import AutoApprovePrompter, FakeLLMClient
+from tests.fakes import AutoApprovePrompter, FakeLLMClient, FakeSandbox, InMemoryMemoryStore
 
 
 def _step(
@@ -53,6 +53,58 @@ def _step(
 
 def _systems(llm: FakeLLMClient, prefix: str) -> list[list[Message]]:
     return [messages for messages in llm.messages if (messages[0].content or "").startswith(prefix)]
+
+
+def test_hard_deny_does_not_prompt(tmp_path: Path) -> None:
+    class _DenyPolicy:
+        @property
+        def autonomy(self) -> AutonomyLevel:
+            return AutonomyLevel.AUTO
+
+        def classify(self, action: ActionRequest) -> RiskLevel:
+            return action.risk
+
+        def requires_approval(self, action: ActionRequest) -> bool:
+            return False
+
+        def decide(self, action: ActionRequest) -> str:
+            return "deny"
+
+    prompter = AutoApprovePrompter()
+    llm = FakeLLMClient(
+        [
+            plan_json([_step("write", "Write a note")]),
+            ChatResponse(
+                message=Message.assistant(
+                    tool_calls=[
+                        ToolCall(
+                            id="c1",
+                            name="write_file",
+                            arguments={"path": "note.txt", "content": "nope"},
+                        )
+                    ]
+                )
+            ),
+            "could not write",
+            verdict(False, "file missing", replan=False),
+            "Blocked.",
+        ]
+    )
+    sandbox = FakeSandbox(tmp_path / "work")
+    loop = PlanDoVerifyLoop(
+        llm=llm,
+        sandbox=sandbox,
+        memory=InMemoryMemoryStore(),
+        policy=_DenyPolicy(),
+        prompter=prompter,
+        max_attempts=1,
+    )
+    plan = loop.run("write a note")
+    assert plan.steps[0].status is StepStatus.FAILED
+    assert prompter.prompts == []
+    assert loop.action_log[0].approved is False
+    assert loop.action_log[0].approver == "policy"
+    assert not (sandbox.workdir / "note.txt").exists()
 
 
 def test_scripted_plan_reads_a_file_and_logs_the_action(tmp_path: Path) -> None:

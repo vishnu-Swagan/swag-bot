@@ -100,7 +100,9 @@ Tools:
 | `swag_run_task` | `goal` in, summary out. The callable is injected. This package does not import the core loop. |
 | `swag_list_skills` | JSON list of `{name, description}` from an injected provider. This package does not import the plugin loader. |
 
-With no runner configured, `swag_run_task` returns a short message instead of failing closed on a missing core.
+With no runner configured, `swag_run_task` returns a short message instead of failing closed on a missing core. The root `swag serve-mcp` command (and `swag mcp serve`) installs the real plan-do-verify runner and the plugin skill list. This package still does not import `core` or `plugins`; the callables are injected from the composition root.
+
+`swag run` passes this package's sandbox and permission policy into the loop, and passes the same policy into `build_mcp_client`. The loop asks the policy before every tool call, including MCP tools. A second prompt is not shown for those MCP calls. A hard deny (`decide` returns `deny`) is still enforced, by the loop and again by the MCP client.
 
 ## Interface addition
 

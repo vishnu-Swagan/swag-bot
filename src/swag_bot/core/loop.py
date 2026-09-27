@@ -135,8 +135,12 @@ class PlanDoVerifyLoop:
         self._emit_lock = threading.Lock()
         self._local = threading.local()
 
-    def run(self, goal: str, *, dry_run: bool = False) -> TaskPlan:
-        """Plan, do, and verify ``goal``. A dry run returns the plan unexecuted."""
+    def run(self, goal: str, *, dry_run: bool = False, context: str = "") -> TaskPlan:
+        """Plan, do, and verify ``goal``. A dry run returns the plan unexecuted.
+
+        ``context`` is extra planner text from the composition root: recalled
+        memories and the instructions of skills selected for this goal.
+        """
         with self._log_lock:
             self.action_log.clear()
         with self._state_lock:
@@ -148,7 +152,7 @@ class PlanDoVerifyLoop:
         self._plan = None
 
         names = [tool.name for tool in self.tools.list_tools()]
-        planner = Planner(self._llm, model=self.model, tool_names=names)
+        planner = Planner(self._llm, model=self.model, tool_names=names, context=context)
         plan = planner.create(goal, max_steps=self.max_steps)
         self._plan = plan
         self._emit(LoopEvent(kind="plan", plan=plan))

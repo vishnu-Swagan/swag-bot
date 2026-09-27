@@ -102,8 +102,19 @@ class SwagMCPClient:
         tools: list[Tool] = _run_sync(self._list_async)
         return tools
 
-    def call_tool(self, name: str, arguments: Mapping[str, Any]) -> str:
-        """Invoke a tool. Raise ``KeyError`` if it is unknown."""
+    def call_tool(
+        self,
+        name: str,
+        arguments: Mapping[str, Any],
+        *,
+        authorized: bool = False,
+    ) -> str:
+        """Invoke a tool. Raise ``KeyError`` if it is unknown.
+
+        ``authorized=True`` means the caller already applied the permission
+        policy (the plan-do-verify loop does this before ``ToolRegistry.call``).
+        A hard deny is still enforced. The user is not prompted a second time.
+        """
         self._ensure_open()
         if name not in self._index:
             self.list_tools()
@@ -123,7 +134,10 @@ class SwagMCPClient:
                 "arguments": _scrub(dict(arguments)),
             },
         )
-        self._authorize(action)
+        if authorized:
+            self._reject_if_denied(action)
+        else:
+            self._authorize(action)
         self._ensure_sdk()
         text: str = _run_sync(self._call_async, spec, tool_name, dict(arguments))
         return text
@@ -164,6 +178,14 @@ class SwagMCPClient:
         async with self._opener(spec) as session:
             result = await session.call_tool(tool_name, arguments)
         return _result_text(result)
+
+    def _reject_if_denied(self, action: ActionRequest) -> None:
+        """Enforce a hard deny after another layer already asked the user."""
+        stamped = action.model_copy(update={"risk": self._policy.classify(action)})
+        if _decision_of(self._policy, stamped) != "deny":
+            return
+        self._record(stamped, approved=False, approver="policy")
+        raise MCPPermissionDenied(f"MCP tool {action.target} was denied by policy")
 
     def _authorize(self, action: ActionRequest) -> None:
         risk = self._policy.classify(action)

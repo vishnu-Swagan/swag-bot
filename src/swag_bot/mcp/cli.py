@@ -13,8 +13,25 @@ from swag_bot.config import load_settings
 from swag_bot.errors import ConfigError, SwagError
 from swag_bot.interfaces import MCPServerSpec
 from swag_bot.mcp.config import load_mcp_servers, save_mcp_servers
+from swag_bot.mcp.server import SkillProvider, TaskRunner
 
 app = typer.Typer(help="MCP client and server.", no_args_is_help=True)
+
+# Filled by the root CLI so ``swag serve-mcp`` and ``swag mcp serve`` share
+# the real task runner and skill list. This module does not import core or plugins.
+_task_runner: TaskRunner | None = None
+_skill_provider: SkillProvider | None = None
+
+
+def configure_server(
+    *,
+    runner: TaskRunner | None = None,
+    skills_provider: SkillProvider | None = None,
+) -> None:
+    """Install the callables ``serve`` passes to the MCP server."""
+    global _task_runner, _skill_provider
+    _task_runner = runner
+    _skill_provider = skills_provider
 
 
 def _console() -> Console:
@@ -35,7 +52,7 @@ def serve(
     try:
         from swag_bot.mcp.server import build_swag_mcp_server
 
-        server = build_swag_mcp_server()
+        server = build_swag_mcp_server(runner=_task_runner, skills_provider=_skill_provider)
     except SwagError as exc:
         print(str(exc), file=sys.stderr)
         raise typer.Exit(code=2) from exc

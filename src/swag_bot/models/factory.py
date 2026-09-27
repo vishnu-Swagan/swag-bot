@@ -1,16 +1,13 @@
 """Select an ``LLMClient`` from settings.
 
-``get_llm_client`` is the working factory used by ``swag model``.
-``build_llm_client`` stays a stub: the foundation smoke test
-``tests/test_fakes.py`` asserts that it raises ``NotImplementedYet``, and
-that test is outside this package. ``swag run`` can call ``get_llm_client``
-the same way, or alias ``build_llm_client`` once that assertion is updated.
+``build_llm_client`` and ``get_llm_client`` select the same client.
+``swag run`` calls ``build_llm_client``. ``swag model`` calls ``get_llm_client``.
 """
 
 from __future__ import annotations
 
 from swag_bot.config import Settings, load_settings
-from swag_bot.errors import ConfigError, NotImplementedYet
+from swag_bot.errors import ConfigError
 from swag_bot.interfaces import LLMClient
 from swag_bot.models.litellm_client import LiteLLMClient
 from swag_bot.models.ollama import OllamaClient
@@ -39,8 +36,8 @@ def get_llm_client(config: Settings | None = None) -> LLMClient:
 
 
 def build_llm_client(settings: Settings) -> LLMClient:
-    """Foundation stub. See ``get_llm_client`` for the working factory."""
-    raise NotImplementedYet("models.build_llm_client")
+    """Client for ``settings.model``. Same selection as ``get_llm_client``."""
+    return get_llm_client(settings)
 
 
 def split_provider_model(spec: str) -> tuple[str, str]:

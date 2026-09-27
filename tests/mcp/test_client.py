@@ -19,6 +19,7 @@ from swag_bot.mcp.registry import MCPToolRegistry
 from swag_bot.safety.policy import DefaultPermissionPolicy
 
 pytest.importorskip("mcp")
+pytest.importorskip("mcp.server.mcpserver")
 from mcp.server.mcpserver import MCPServer  # noqa: E402
 
 

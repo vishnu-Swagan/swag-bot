@@ -36,10 +36,11 @@ def test_version() -> None:
     assert __version__ in result.output
 
 
-def test_run_stub_exits() -> None:
-    result = runner.invoke(app, ["run", "say hello"])
-    assert result.exit_code == 2
-    assert "not implemented" in _visible(result).lower()
+def test_run_help() -> None:
+    result = runner.invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "--dry-run" in result.output
+    assert "goal" in result.output.lower()
 
 
 def test_plugin_help() -> None:

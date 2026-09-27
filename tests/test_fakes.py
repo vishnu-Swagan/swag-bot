@@ -7,13 +7,15 @@ from pathlib import Path
 import pytest
 
 from swag_bot.core.loop import PlanDoVerifyLoop
-from swag_bot.errors import NotImplementedYet, SandboxError
+from swag_bot.errors import SandboxError
 from swag_bot.interfaces import (
     ActionKind,
     ActionRequest,
     AutonomyLevel,
     ChatResponse,
     CommandResult,
+    LLMClient,
+    MemoryStore,
     Message,
     PermissionPolicy,
     RiskLevel,
@@ -88,16 +90,16 @@ def test_registry_call_and_missing() -> None:
         registry.get("missing")
 
 
-def test_factories_are_stubs_and_loop_returns_a_plan(tmp_path: Path) -> None:
+def test_factories_work_and_loop_returns_a_plan(tmp_path: Path) -> None:
     from swag_bot.config import Settings
 
     settings = Settings()
-    for factory in (
-        build_llm_client,
-        build_memory_store,
-    ):
-        with pytest.raises(NotImplementedYet):
-            factory(settings)
+    client = build_llm_client(settings)
+    assert isinstance(client, LLMClient)
+    store = build_memory_store(settings)
+    assert isinstance(store, MemoryStore)
+    remembered = store.add("factory check")
+    assert store.get(remembered.id) == remembered
     sandbox = build_sandbox(settings)
     assert sandbox.workdir.is_dir()
     policy = build_permission_policy(settings)

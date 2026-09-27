@@ -20,14 +20,18 @@ from rich.table import Table
 from swag_bot import __version__
 from swag_bot.config import config_path, load_settings
 from swag_bot.core.cli import app as core_app
+from swag_bot.core.cli import mcp_skill_provider, mcp_task_runner
 from swag_bot.errors import ConfigError
 from swag_bot.mcp.cli import app as mcp_app
+from swag_bot.mcp.cli import configure_server
 from swag_bot.mcp.cli import serve as mcp_serve
 from swag_bot.memory.cli import app as memory_app
 from swag_bot.models.cli import app as models_app
 from swag_bot.plugins.cli import app as plugins_app
 from swag_bot.plugins.cli import skill_app
 from swag_bot.safety.cli import app as safety_app
+
+configure_server(runner=mcp_task_runner, skills_provider=mcp_skill_provider)
 
 app = typer.Typer(
     name="swag",

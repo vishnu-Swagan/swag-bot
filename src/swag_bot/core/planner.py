@@ -22,17 +22,21 @@ class Planner:
         *,
         model: str | None = None,
         tool_names: Sequence[str] = (),
+        context: str = "",
     ) -> None:
         self.llm = llm
         self.model = model
         self.tool_names = list(tool_names)
+        self.context = context
 
     def create(self, goal: str, *, max_steps: int) -> TaskPlan:
         """Return a plan for ``goal``. Fall back to one step if the model is unreadable."""
         feedback: str | None = None
         for _ in range(2):
             try:
-                payload = self._ask(_create_prompt(goal, self.tool_names, max_steps, feedback))
+                payload = self._ask(
+                    _create_prompt(goal, self.tool_names, max_steps, feedback, self.context)
+                )
                 steps = steps_from_payload(payload, limit=max_steps, existing_ids=set())
             except PlanParseError as exc:
                 feedback = str(exc)
@@ -59,7 +63,7 @@ class Planner:
         feedback: str | None = None
         existing = {step.id for step in plan.steps}
         for _ in range(2):
-            prompt = _revise_prompt(plan, failures, max_new, feedback)
+            prompt = _revise_prompt(plan, failures, max_new, feedback, self.context)
             try:
                 payload = self._ask(prompt)
                 return steps_from_payload(payload, limit=max_new, existing_ids=set(existing))
@@ -186,6 +190,7 @@ def _create_prompt(
     tool_names: Sequence[str],
     max_steps: int,
     feedback: str | None,
+    context: str = "",
 ) -> str:
     tools = ", ".join(tool_names) if tool_names else "(none)"
     lines = [
@@ -193,6 +198,8 @@ def _create_prompt(
         f"Step limit: {max_steps}",
         f"Tools: {tools}",
     ]
+    if context.strip():
+        lines.append(context.strip())
     if feedback:
         lines.append(f"Your previous plan could not be used: {feedback}")
         lines.append("Return a corrected JSON plan.")
@@ -204,6 +211,7 @@ def _revise_prompt(
     failures: Sequence[tuple[Step, str]],
     max_new: int,
     feedback: str | None,
+    context: str = "",
 ) -> str:
     done = [step for step in plan.steps if step.status.value == "done"]
     lines = [
@@ -214,6 +222,8 @@ def _revise_prompt(
     if done:
         lines.append("Finished steps:")
         lines.extend(f"- {step.id}: {step.title}" for step in done)
+    if context.strip():
+        lines.append(context.strip())
     lines.append("These steps failed their check and need a different approach:")
     for step, reason in failures:
         lines.append(f"- {step.id} ({step.title}): {reason}")

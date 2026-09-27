@@ -22,7 +22,7 @@ Built-in tools, registered on the `ToolRegistry` and executed through the `Sandb
 - `write_file` (paths must stay in the sandbox workdir)
 - `run_shell`
 
-`loop.py` takes collaborators in its constructor. It does not import `models`, `memory`, `safety`, `mcp`, or `plugins`. `cli.py` is the composition root and calls the public factories. Until a factory is real it raises `NotImplementedYet`. `swag run` then uses a small in-process stand-in for the sandbox, memory, policy, and prompter. The model factory has no stand-in: without it the command exits 2.
+`loop.py` takes collaborators in its constructor. It does not import `models`, `memory`, `safety`, `mcp`, or `plugins`. `cli.py` is the composition root. It calls `build_llm_client`, `build_memory_store`, `build_sandbox`, `build_permission_policy`, and `build_prompter`, selects plugin skills for the goal, recalls memories before planning, registers built-in tools plus MCP tools, and saves the summary to memory afterwards. A factory that still raises `NotImplementedYet` is replaced with a small in-process stand-in, except the model client: a model error fails the run.
 
 The command writes `plan.json`, `action-log.jsonl`, and `summary.md` under `--output-dir` (default `./swag-output/<UTC timestamp>`). `--dry-run` plans only. The terminal shows a live task list (`pending`, `running`, `done`, `failed`, `skipped`) and streams step output.
 

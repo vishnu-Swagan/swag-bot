@@ -128,7 +128,13 @@ class StepExecutor:
         if classified is not action.risk:
             action = action.model_copy(update={"risk": classified})
 
-        if self.policy.requires_approval(action):
+        decision = _policy_decision(self.policy, action)
+        if decision == "deny":
+            outcome = "denied"
+            self._record(action, arguments, approved=False, approver="policy", outcome=outcome)
+            self._emit_tool(f"denied {action.summary}")
+            return "Action denied."
+        if decision == "prompt":
             approved = bool(self.prompter.prompt(action))
             approver = "user"
         elif self.policy.autonomy is AutonomyLevel.AUTO:
@@ -177,6 +183,24 @@ class StepExecutor:
     def _emit_tool(self, text: str) -> None:
         if self.on_tool is not None and text:
             self.on_tool(text)
+
+
+def _policy_decision(policy: PermissionPolicy, action: ActionRequest) -> str:
+    """``allow``, ``prompt``, or ``deny``.
+
+    Policies that implement ``decide`` can hard-deny without a prompt.
+    Anything else follows ``requires_approval``.
+    """
+    decide = getattr(policy, "decide", None)
+    if callable(decide):
+        raw = decide(action)
+        value = getattr(raw, "value", raw)
+        text = str(value)
+        if text in {"allow", "prompt", "deny"}:
+            return text
+    if policy.requires_approval(action):
+        return "prompt"
+    return "allow"
 
 
 def _initial_risk(name: str, arguments: dict[str, Any]) -> RiskLevel:

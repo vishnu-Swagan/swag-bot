@@ -71,11 +71,9 @@ one short prompt.
 
 ### `build_llm_client`
 
-`build_llm_client` still raises `NotImplementedYet`. The foundation smoke
-test `tests/test_fakes.py` asserts that, and that file is outside this
-package. `swag model` and new code should call `get_llm_client`. Aliasing
-`build_llm_client` to `get_llm_client` is the follow-up once that assertion
-is updated. No fields were added to `interfaces.py`.
+`build_llm_client(settings)` is the factory `swag run` calls. It returns the
+same client as `get_llm_client(settings)`. `swag model` keeps calling
+`get_llm_client`. No fields were added to `interfaces.py`.
 
 ## Memory
 
@@ -128,5 +126,6 @@ swag memory list
 swag memory forget <id>
 ```
 
-`build_memory_store` is still the foundation stub, for the same reason as
-`build_llm_client`. Call `get_memory_store`.
+`build_memory_store(settings)` is the factory `swag run` calls. It returns the
+same store as `get_memory_store(settings)`. `swag memory` keeps calling
+`get_memory_store`.

@@ -201,6 +201,8 @@ core loop.
 An `url` field selects a remote transport. `type` or `transport` may be
 `stdio`, `http`, `sse`, or `ws` (`streamable-http` is stored as `http`).
 When it is omitted, a `command` is `stdio` and a `url` is `http`.
+`headers` is kept for streamable HTTP (`Authorization`, and other string
+headers). Values may be `${VAR}` references. The loader does not expand them.
 
 Put secrets in environment-variable references (`${GITHUB_PERSONAL_ACCESS_TOKEN}`
 or the host environment via Docker `-e`). The loader does not expand those
@@ -260,6 +262,12 @@ factories. `build_registry(settings)` returns a `PluginRegistry`: loaded
 plugins, skill metadata, slash commands, sub-agents, MCP specs, and
 `select_skills(goal)`. The selector is keyword overlap between the goal and
 each skill's name and description. It does not call a model.
+
+`swag run` calls `select_skills` for the goal and appends the matching
+`SKILL.md` bodies to the planner prompt. It also merges each enabled
+plugin's MCP servers with `~/.swag/mcp.json` (a config entry with the same
+name wins) and registers those tools next to `read_file`, `write_file`, and
+`run_shell`.
 
 ## Marketplaces
 

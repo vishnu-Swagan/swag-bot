@@ -175,7 +175,11 @@ def test_inline_and_http_mcp(tmp_path: Path) -> None:
         tmp_path / "plugin",
         extra={
             "mcpServers": {
-                "remote": {"url": "https://example.com/mcp", "type": "http"},
+                "remote": {
+                    "url": "https://example.com/mcp",
+                    "type": "http",
+                    "headers": {"Authorization": "Bearer ${TOKEN}"},
+                },
                 "local": {"command": "echo", "args": ["hi"], "env": {"TOKEN": "${TOKEN}"}},
             }
         },
@@ -188,6 +192,7 @@ def test_inline_and_http_mcp(tmp_path: Path) -> None:
     assert set(servers) == {"remote", "local"}
     assert servers["remote"].transport == "http"
     assert servers["remote"].url == "https://example.com/mcp"
+    assert servers["remote"].headers["Authorization"] == "Bearer ${TOKEN}"
     assert servers["local"].transport == "stdio"
     assert servers["local"].env["TOKEN"] == "${TOKEN}"
 

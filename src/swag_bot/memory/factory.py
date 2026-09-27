@@ -1,10 +1,7 @@
 """Select a ``MemoryStore`` from settings.
 
-``get_memory_store`` is the working factory used by ``swag memory``.
-``build_memory_store`` stays a stub because the foundation smoke test
-``tests/test_fakes.py`` asserts that it raises ``NotImplementedYet``. That
-test is outside this package. Call ``get_memory_store`` from ``swag run``,
-or alias the two once that assertion is updated.
+``build_memory_store`` and ``get_memory_store`` select the same store.
+``swag run`` calls ``build_memory_store``. ``swag memory`` calls ``get_memory_store``.
 """
 
 from __future__ import annotations
@@ -12,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from swag_bot.config import Settings, load_settings, swag_home
-from swag_bot.errors import ConfigError, NotImplementedYet
+from swag_bot.errors import ConfigError
 from swag_bot.interfaces import MemoryStore
 from swag_bot.memory.agentmemory import agentmemory_from_settings
 from swag_bot.memory.json_store import JsonFileMemoryStore
@@ -41,8 +38,8 @@ def get_memory_store(config: Settings | None = None) -> MemoryStore:
 
 
 def build_memory_store(settings: Settings) -> MemoryStore:
-    """Foundation stub. See ``get_memory_store`` for the working factory."""
-    raise NotImplementedYet("memory.build_memory_store")
+    """Store for ``settings.memory``. Same selection as ``get_memory_store``."""
+    return get_memory_store(settings)
 
 
 def resolve_memory_path(settings: Settings, default_name: str) -> Path:

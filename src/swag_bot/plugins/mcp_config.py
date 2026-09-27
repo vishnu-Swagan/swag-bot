@@ -62,16 +62,13 @@ def _one_server(name: str, raw: dict[str, Any], where: str) -> MCPServerSpec:
         env_raw = {}
     if not isinstance(env_raw, dict):
         raise PluginError(f"{where}MCP server {name!r} env must be an object")
-    env: dict[str, str] = {}
-    for key, value in env_raw.items():
-        if not isinstance(key, str):
-            raise PluginError(f"{where}MCP server {name!r} env keys must be strings")
-        if not isinstance(value, str):
-            raise PluginError(
-                f"{where}MCP server {name!r} env values must be strings "
-                "(use an environment-variable reference, not a literal secret)"
-            )
-        env[key] = value
+    env = _string_map(env_raw, name=name, where=where, field="env")
+    headers_raw = raw.get("headers", {})
+    if headers_raw is None:
+        headers_raw = {}
+    if not isinstance(headers_raw, dict):
+        raise PluginError(f"{where}MCP server {name!r} headers must be an object")
+    headers = _string_map(headers_raw, name=name, where=where, field="headers")
     transport = _transport(raw.get("transport") or raw.get("type"), command, url, name, where)
     return MCPServerSpec(
         name=name,
@@ -79,8 +76,30 @@ def _one_server(name: str, raw: dict[str, Any], where: str) -> MCPServerSpec:
         args=list(args_raw),
         env=env,
         url=url,
+        headers=headers,
         transport=transport,
     )
+
+
+def _string_map(
+    raw: dict[Any, Any],
+    *,
+    name: str,
+    where: str,
+    field: str,
+) -> dict[str, str]:
+    """Copy a string map. Non-strings are rejected so secrets stay as ``${VAR}`` refs."""
+    parsed: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str):
+            raise PluginError(f"{where}MCP server {name!r} {field} keys must be strings")
+        if not isinstance(value, str):
+            raise PluginError(
+                f"{where}MCP server {name!r} {field} values must be strings "
+                "(use an environment-variable reference, not a literal secret)"
+            )
+        parsed[key] = value
+    return parsed
 
 
 def _transport(declared: Any, command: str | None, url: str | None, name: str, where: str) -> str:

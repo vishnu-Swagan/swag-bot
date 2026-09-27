@@ -9,7 +9,6 @@ from __future__ import annotations
 from swag_bot.config import Settings
 from swag_bot.interfaces import (
     ApprovalPrompter,
-    MCPClient,
     MCPServerSpec,
     PermissionPolicy,
 )
@@ -25,7 +24,7 @@ def build_mcp_client(
     recorder: ActionRecorder | None = None,
     opener: SessionOpener | None = None,
     servers: list[MCPServerSpec] | None = None,
-) -> MCPClient:
+) -> SwagMCPClient:
     """Client for the MCP servers in ``~/.swag/mcp.json``.
 
     ``policy`` is asked before every tool call. When it is omitted, the

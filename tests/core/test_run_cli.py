@@ -43,10 +43,16 @@ def test_help_lists_run_options() -> None:
         assert name in result.output
 
 
-def test_run_without_a_model_client_exits_2() -> None:
+def test_model_errors_exit_1(monkeypatch: pytest.MonkeyPatch) -> None:
+    from swag_bot.models.errors import ModelError
+
+    def fail(settings: object) -> object:
+        raise ModelError("ollama is not reachable")
+
+    monkeypatch.setattr("swag_bot.core.cli.build_llm_client", fail)
     result = runner.invoke(app, ["run", "say hello"])
-    assert result.exit_code == 2
-    assert "not implemented" in _visible(result).lower()
+    assert result.exit_code == 1
+    assert "not reachable" in _visible(result).lower()
 
 
 def test_invalid_limits_exit_1() -> None:

@@ -5,9 +5,11 @@ the package layout, the CLI, and the shared contracts. Four agents implement
 the real behavior in parallel, each on a branch that starts from this one.
 They do not edit each other's folders.
 
-The status of the project is early development. `swag run`, plugin loading,
-the sandbox, and the model clients are stubs that exit 2 or raise
-`NotImplementedYet`.
+v0 wires the four areas together. `swag run` uses the configured model
+(Ollama by default), the safety sandbox and permission policy, built-in tools
+plus MCP servers from config and enabled plugins, skills selected for the
+goal, and memory (recall before planning, save a summary after).
+`swag serve-mcp` runs a real task and lists discovered skills.
 
 ## Module map
 
@@ -52,9 +54,9 @@ root and may call the public factories:
 | `build_mcp_client(settings)` | `swag_bot.mcp` |
 | `discover_plugins(settings)` / `load_plugin(root)` | `swag_bot.plugins` |
 
-Until an owner implements a factory, it raises `NotImplementedYet`. Catch that
-if you need to run without the other package. Unit tests inject objects from
-`tests/fakes.py` and do not call the factories.
+`swag run` calls these factories. If one still raises `NotImplementedYet`,
+the command uses a small in-process stand-in, except for the model client.
+Unit tests inject objects from `tests/fakes.py` and do not need the factories.
 
 ## Ownership
 
@@ -168,7 +170,8 @@ content and metadata values, newest match first.
 `done`, `failed`, `skipped`. `done` means the step ran and the check passed.
 Step ids are unique, and `depends_on` may only name steps in the same plan.
 `StepResult` is the outcome of one step. `AgentLoop.run(goal)` returns the
-plan. `PlanDoVerifyLoop` in `core/loop.py` is the stub.
+plan. `PlanDoVerifyLoop` in `core/loop.py` is the implementation. `swag run`
+passes recalled memories and selected skill instructions in as planner context.
 
 ### MCP
 
@@ -196,13 +199,13 @@ load `.env` by itself.
 
 | Command | Status |
 | --- | --- |
-| `swag run "<goal>"` | stub, exit 2 |
-| `swag plugin list\|show\|validate` | stub, exit 2 |
-| `swag safety log\|policy` | stub, exit 2 |
-| `swag mcp serve\|tools` | stub, exit 2 |
-| `swag serve-mcp` | stub, exit 2, calls `mcp.cli.serve` |
-| `swag model list` | stub, exit 2 |
-| `swag memory search` | stub, exit 2 |
+| `swag run "<goal>"` | plans, runs, and verifies; writes `summary.md` |
+| `swag plugin` / `swag skill` | load, install, and list Cowork-compatible plugins and skills |
+| `swag safety log\|policy` | action log and autonomy rules |
+| `swag mcp list\|tools\|add\|remove` | MCP servers in `~/.swag/mcp.json` |
+| `swag serve-mcp` | stdio MCP server; `--http` for streamable HTTP. Runs tasks and lists skills |
+| `swag model list\|test\|set` | Ollama by default, LiteLLM for bring-your-own-key providers |
+| `swag memory add\|search\|list\|forget` | SQLite by default |
 | `swag version` | prints `swag-bot` and the version |
 | `swag doctor` | prints config and optional-dep status |
 

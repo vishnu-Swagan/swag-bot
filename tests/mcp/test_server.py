@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-import anyio
 import pytest
+
+pytest.importorskip("mcp")
+pytest.importorskip("anyio")
+
+import anyio
 
 from swag_bot.interfaces import AutonomyLevel, MCPServerSpec
 from swag_bot.mcp.client import SwagMCPClient, in_memory_connector
 from swag_bot.mcp.server import build_swag_mcp_server
 from swag_bot.safety.policy import DefaultPermissionPolicy
-
-pytest.importorskip("mcp")
 
 
 def test_serve_mcp_lists_and_calls_injected_tools() -> None:
