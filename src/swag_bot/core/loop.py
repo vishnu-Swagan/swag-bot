@@ -28,6 +28,7 @@ from swag_bot.interfaces import (
     Step,
     StepResult,
     StepStatus,
+    TaintTracker,
     TaskPlan,
     Tool,
     ToolRegistry,
@@ -98,6 +99,7 @@ class PlanDoVerifyLoop:
         engine: str = "python",
         graphbit_module: object | None = None,
         on_event: Callable[[LoopEvent], None] | None = None,
+        taint: TaintTracker | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
@@ -115,6 +117,7 @@ class PlanDoVerifyLoop:
         self.max_attempts = max_attempts
         self.concurrency = concurrency
         self.on_event = on_event
+        self.taint = taint
         if tools is None:
             tools = InMemoryToolRegistry()
         register_builtin_tools(tools, sandbox)
@@ -169,6 +172,7 @@ class PlanDoVerifyLoop:
             model=self.model,
             on_action=self._record,
             on_tool=self._on_tool,
+            taint=self.taint,
         )
         verifier = Verifier(self._llm, model=self.model)
         while True:

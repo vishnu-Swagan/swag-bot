@@ -14,6 +14,7 @@ default, and it does not need an API key.
 - Plan, do, and verify loop (`swag run`), with parallel independent steps
 - Local sandbox by default, optional Docker sandbox
 - Permission policy with autonomy levels `ask-always`, `ask-risky`, and `auto`
+- Taint firewall on tool output, so a fetched page or plugin cannot by itself send mail, hit the network, read secrets, or delete (`docs/TAINT.md`)
 - Append-only action log with secret redaction
 - Claude Cowork-compatible plugins, Agent Skills, slash commands, and a marketplace installer
 - MCP client (stdio and streamable HTTP) and `swag serve-mcp`

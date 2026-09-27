@@ -12,6 +12,7 @@ from pathlib import Path
 from swag_bot.config import swag_home
 from swag_bot.errors import SandboxError, SwagError
 from swag_bot.interfaces import (
+    SWAG_TAINT_KEY,
     ActionRequest,
     AutonomyLevel,
     Permission,
@@ -227,12 +228,14 @@ class DefaultPermissionPolicy:
         *,
         grants: Mapping[str, set[str] | Sequence[str]] | None = None,
         workdir: Path | None = None,
+        taint_mode: str = "off",
     ) -> None:
         self._autonomy = autonomy
         self._grants: dict[str, set[str]] = {
             name: set(values) for name, values in (grants or {}).items()
         }
         self._workdir = workdir
+        self._taint_mode = taint_mode if taint_mode in {"off", "escalate", "block"} else "off"
 
     @property
     def autonomy(self) -> AutonomyLevel:
@@ -277,10 +280,18 @@ class DefaultPermissionPolicy:
         return needed not in self._grants.get(plugin, set())
 
     def decide(self, action: ActionRequest) -> PolicyDecision:
-        """Allow, prompt, or deny. A hard deny does not prompt."""
+        """Allow, prompt, or deny. A hard deny does not prompt.
+
+        A taint stamp from ``TaintTracker.prepare`` can deny or force a
+        prompt when untrusted data would drive a network, destructive,
+        credential, or send action. ``taint_mode`` ``off`` ignores the stamp.
+        """
         if self.is_denied(action):
             return PolicyDecision.DENY
-        if self.requires_approval(action):
+        taint = _taint_enforcement(action, mode=self._taint_mode)
+        if taint is PolicyDecision.DENY:
+            return PolicyDecision.DENY
+        if taint is PolicyDecision.PROMPT or self.requires_approval(action):
             return PolicyDecision.PROMPT
         return PolicyDecision.ALLOW
 
@@ -313,6 +324,26 @@ class DefaultPermissionPolicy:
         if permission not in _KNOWN_PERMISSIONS:
             risk = _higher(risk, RiskLevel.WRITE)
         return risk
+
+
+def _taint_enforcement(action: ActionRequest, *, mode: str) -> PolicyDecision | None:
+    """How a ``_swag_taint`` stamp changes the decision, or None to leave it.
+
+    ``block`` always denies a tainted sink. ``escalate`` prompts, unless the
+    stamp itself says ``deny`` (that is what ``auto`` autonomy writes, because
+    there is no person to ask). A missing or untainted stamp changes nothing.
+    """
+    if mode == "off":
+        return None
+    raw = action.arguments.get(SWAG_TAINT_KEY)
+    if not isinstance(raw, dict) or raw.get("tainted") is not True:
+        return None
+    enforcement = raw.get("enforcement")
+    if enforcement == "deny" or mode == "block":
+        return PolicyDecision.DENY
+    if enforcement == "prompt" or mode == "escalate":
+        return PolicyDecision.PROMPT
+    return None
 
 
 def _plugin_name(action: ActionRequest) -> str | None:

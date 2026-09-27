@@ -9,6 +9,7 @@ from typing import Any
 from swag_bot.core.prompts import EXECUTOR_SYSTEM
 from swag_bot.core.redact import redact, redact_known
 from swag_bot.interfaces import (
+    SWAG_TAINT_KEY,
     ActionKind,
     ActionLogEntry,
     ActionRequest,
@@ -22,6 +23,7 @@ from swag_bot.interfaces import (
     Step,
     StepResult,
     StepStatus,
+    TaintTracker,
     ToolCall,
     ToolRegistry,
 )
@@ -54,6 +56,7 @@ class StepExecutor:
         max_tool_rounds: int = 6,
         on_action: OnAction | None = None,
         on_tool: OnTool | None = None,
+        taint: TaintTracker | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -64,6 +67,7 @@ class StepExecutor:
         self.max_tool_rounds = max_tool_rounds
         self.on_action = on_action
         self.on_tool = on_tool
+        self.taint = taint
 
     def execute(self, step: Step, *, attempt: int, feedback: str | None) -> StepResult:
         """Run ``step`` once. The caller verifies the returned observation."""
@@ -122,18 +126,22 @@ class StepExecutor:
             self._record(action, arguments, approved=False, approver="policy", outcome=outcome)
             return outcome
 
+        if self.taint is not None:
+            action = self.taint.prepare(action, tool=call.name)
+
         classified = self.policy.classify(action)
         if action.risk is RiskLevel.DESTRUCTIVE:
             classified = RiskLevel.DESTRUCTIVE
         if classified is not action.risk:
             action = action.model_copy(update={"risk": classified})
 
-        decision = _policy_decision(self.policy, action)
+        decision = _apply_taint(_policy_decision(self.policy, action), action)
         if decision == "deny":
-            outcome = "denied"
-            self._record(action, arguments, approved=False, approver="policy", outcome=outcome)
-            self._emit_tool(f"denied {action.summary}")
-            return "Action denied."
+            self._record(
+                action, arguments, approved=False, approver="policy", outcome=_log_denial(action)
+            )
+            self._emit_tool(_emit_denial(action))
+            return _denied_text(action)
         if decision == "prompt":
             approved = bool(self.prompter.prompt(action))
             approver = "user"
@@ -145,10 +153,11 @@ class StepExecutor:
             approver = "policy"
 
         if not approved:
-            outcome = "denied"
-            self._record(action, arguments, approved=False, approver=approver, outcome=outcome)
-            self._emit_tool(f"denied {action.summary}")
-            return "Action denied."
+            self._record(
+                action, arguments, approved=False, approver=approver, outcome=_log_denial(action)
+            )
+            self._emit_tool(_emit_denial(action))
+            return _denied_text(action)
 
         try:
             outcome = self.tools.call(call)
@@ -159,6 +168,8 @@ class StepExecutor:
             return outcome
         self._record(action, arguments, approved=True, approver=approver, outcome=outcome)
         self._emit_tool(action.summary)
+        if self.taint is not None:
+            outcome = self.taint.label_output(call.name, arguments, outcome)
         return outcome
 
     def _record(
@@ -183,6 +194,50 @@ class StepExecutor:
     def _emit_tool(self, text: str) -> None:
         if self.on_tool is not None and text:
             self.on_tool(text)
+
+
+def _apply_taint(decision: str, action: ActionRequest) -> str:
+    """Honor a taint stamp even when the policy does not read it.
+
+    A deny stays a deny. A tainted sink upgrades an allow into a prompt, or
+    any decision into a deny when the stamp says to block.
+    """
+    raw = action.arguments.get(SWAG_TAINT_KEY)
+    if not isinstance(raw, dict) or raw.get("tainted") is not True:
+        return decision
+    enforcement = raw.get("enforcement")
+    if enforcement == "deny":
+        return "deny"
+    if enforcement == "prompt" and decision == "allow":
+        return "prompt"
+    return decision
+
+
+def _taint_message(action: ActionRequest) -> str | None:
+    raw = action.arguments.get(SWAG_TAINT_KEY)
+    if not isinstance(raw, dict) or raw.get("tainted") is not True:
+        return None
+    message = raw.get("message")
+    if isinstance(message, str) and message.strip():
+        return message
+    return None
+
+
+def _denied_text(action: ActionRequest) -> str:
+    """Text returned to the model. Untainted denials keep the old sentence."""
+    return _taint_message(action) or "Action denied."
+
+
+def _log_denial(action: ActionRequest) -> str:
+    """Action-log outcome. Untainted denials stay the single word ``denied``."""
+    return _taint_message(action) or "denied"
+
+
+def _emit_denial(action: ActionRequest) -> str:
+    message = _taint_message(action)
+    if message:
+        return message
+    return f"denied {action.summary}"
 
 
 def _policy_decision(policy: PermissionPolicy, action: ActionRequest) -> str:

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Taint firewall for tool output. Web pages, MCP results, plugin output, and files from outside the workspace are labeled untrusted. Those labels cannot by themselves drive network, destructive, credential, or send actions. `swag run --taint-mode escalate|block|off`. See `docs/TAINT.md`.
+
 ## [0.1.0] - 2026-09-27
 
 First tagged release. This is the v0 agent: `swag run` plans a goal, carries

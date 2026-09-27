@@ -15,7 +15,7 @@ from typing import Annotated, Any
 
 import typer
 
-from swag_bot.config import Settings, load_settings
+from swag_bot.config import Settings, TaintMode, load_settings
 from swag_bot.core.artifacts import default_output_dir, write_run_artifacts
 from swag_bot.core.display import TaskListView, display_status
 from swag_bot.core.fallbacks import FallbackMemory, FallbackPolicy, FallbackPrompter
@@ -33,6 +33,8 @@ from swag_bot.interfaces import (
     Sandbox,
     SkillMeta,
     StepStatus,
+    TaintTracker,
+    TrustLevel,
 )
 from swag_bot.mcp import build_mcp_client
 from swag_bot.mcp.client import SwagMCPClient
@@ -41,7 +43,12 @@ from swag_bot.memory import build_memory_store
 from swag_bot.models import build_llm_client
 from swag_bot.plugins import build_registry
 from swag_bot.registry import InMemoryToolRegistry
-from swag_bot.safety import build_permission_policy, build_prompter, build_sandbox
+from swag_bot.safety import (
+    build_permission_policy,
+    build_prompter,
+    build_sandbox,
+    build_taint_tracker,
+)
 
 app = typer.Typer(help="Plan, do, and verify a multi-step task.")
 
@@ -88,6 +95,13 @@ def run(
         str,
         typer.Option(help="Workflow engine: python (default), graphbit, or auto."),
     ] = "python",
+    taint_mode: Annotated[
+        str | None,
+        typer.Option(
+            "--taint-mode",
+            help="Taint firewall: escalate (ask, show the source), block, or off.",
+        ),
+    ] = None,
 ) -> None:
     """Plan, do, and verify a multi-step task."""
     if not goal.strip():
@@ -131,6 +145,7 @@ def run(
                 engine=engine,
                 on_event=on_event,
                 announce=typer.echo,
+                taint_mode=taint_mode,
             )
     except (ValueError, SwagError) as exc:
         typer.echo(str(exc), err=True)
@@ -156,6 +171,7 @@ def execute_goal(
     on_event: Callable[[LoopEvent], None] | None = None,
     announce: Callable[[str], None] | None = None,
     settings: Settings | None = None,
+    taint_mode: str | None = None,
 ) -> GoalResult:
     """Run one goal with the configured model, sandbox, policy, tools, and memory.
 
@@ -175,6 +191,14 @@ def execute_goal(
         active = active.model_copy(
             update={"model": active.model.model_copy(update={"model": model})}
         )
+    if taint_mode is not None:
+        try:
+            chosen_mode = TaintMode(taint_mode)
+        except ValueError as exc:
+            raise SwagError("taint mode must be escalate, block, or off") from exc
+        active = active.model_copy(
+            update={"taint": active.taint.model_copy(update={"mode": chosen_mode})}
+        )
 
     llm = build_llm_client(active)
     destination = output_dir if output_dir is not None else default_output_dir()
@@ -185,10 +209,13 @@ def execute_goal(
     prompter = _prompter(active)
     plugins = _plugins(active)
 
+    tracker = build_taint_tracker(active, llm=llm)
+    if tracker is not None:
+        tracker.note(goal, source="user", trust=TrustLevel.TRUSTED)
     tools = InMemoryToolRegistry()
     register_builtin_tools(tools, sandbox)
-    mcp_client = _attach_mcp_tools(tools, active, policy, prompter, plugins)
-    context = _planner_context(goal, memory, plugins)
+    mcp_client = _attach_mcp_tools(tools, active, policy, prompter, plugins, tracker)
+    context = _planner_context(goal, memory, plugins, tracker, active.taint.memory)
 
     try:
         loop = PlanDoVerifyLoop(
@@ -203,6 +230,7 @@ def execute_goal(
             max_attempts=max_attempts,
             concurrency=concurrency,
             engine=engine,
+            taint=tracker,
         )
     except (ValueError, SwagError):
         if mcp_client is not None:
@@ -285,15 +313,27 @@ def _plugins(settings: Settings) -> PluginRegistry | None:
         return None
 
 
-def _planner_context(goal: str, memory: MemoryStore, plugins: PluginRegistry | None) -> str:
+def _planner_context(
+    goal: str,
+    memory: MemoryStore,
+    plugins: PluginRegistry | None,
+    tracker: TaintTracker | None = None,
+    memory_trust: TrustLevel = TrustLevel.TRUSTED,
+) -> str:
     sections: list[str] = []
     recalled = _recall(memory, goal)
     if recalled:
         lines = ["Relevant memories:", *[f"- {item}" for item in recalled]]
         sections.append("\n".join(lines))
-    skills = _skill_instructions(goal, plugins)
+        if tracker is not None:
+            for item in recalled:
+                tracker.note(item, source="memory", trust=memory_trust)
+    skills = _skill_blocks(goal, plugins)
     if skills:
-        sections.append(skills)
+        sections.append("Selected skills:\n\n" + "\n\n".join(body for _name, body in skills))
+        if tracker is not None:
+            for name, body in skills:
+                tracker.note(body, source=f"plugin:{name}", trust=TrustLevel.UNTRUSTED)
     return "\n\n".join(sections)
 
 
@@ -304,24 +344,22 @@ def _recall(memory: MemoryStore, goal: str) -> list[str]:
         return []
 
 
-def _skill_instructions(goal: str, plugins: PluginRegistry | None) -> str:
+def _skill_blocks(goal: str, plugins: PluginRegistry | None) -> list[tuple[str, str]]:
     if plugins is None:
-        return ""
+        return []
     try:
         chosen = plugins.select_skills(goal, limit=5)
     except Exception:
-        return ""
-    blocks: list[str] = []
+        return []
+    blocks: list[tuple[str, str]] = []
     for meta in chosen:
         try:
             body = plugins.load_skill(meta.name).instructions().strip()
         except (KeyError, OSError, SwagError):
             continue
         if body:
-            blocks.append(f"### {meta.name}\n{body}")
-    if not blocks:
-        return ""
-    return "Selected skills:\n\n" + "\n\n".join(blocks)
+            blocks.append((meta.name, f"### {meta.name}\n{body}"))
+    return blocks
 
 
 def _save_summary(memory: MemoryStore, goal: str, summary: str) -> None:
@@ -340,13 +378,20 @@ def _attach_mcp_tools(
     policy: PermissionPolicy,
     prompter: ApprovalPrompter,
     plugins: PluginRegistry | None,
+    tracker: TaintTracker | None = None,
 ) -> SwagMCPClient | None:
     servers = _mcp_servers(settings, plugins)
     if not servers:
         return None
     client: SwagMCPClient | None = None
     try:
-        client = build_mcp_client(settings, policy=policy, prompter=prompter, servers=servers)
+        client = build_mcp_client(
+            settings,
+            policy=policy,
+            prompter=prompter,
+            servers=servers,
+            taint=tracker,
+        )
         listed = client.list_tools()
     except Exception as exc:
         print(f"warning: MCP tools were not loaded: {exc}", file=sys.stderr)

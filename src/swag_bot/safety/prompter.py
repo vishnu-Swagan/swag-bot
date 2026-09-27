@@ -9,7 +9,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.table import Table
 
-from swag_bot.interfaces import ActionRequest
+from swag_bot.interfaces import SWAG_TAINT_KEY, ActionRequest
 
 
 class RichApprovalPrompter:
@@ -47,4 +47,15 @@ def _panel(action: ActionRequest) -> Panel:
     plugin = action.arguments.get("plugin")
     if isinstance(plugin, str) and plugin:
         table.add_row("plugin", plugin)
+    stamp = action.arguments.get(SWAG_TAINT_KEY)
+    if isinstance(stamp, dict) and stamp.get("tainted") is True:
+        sources = stamp.get("sources")
+        if isinstance(sources, list) and sources:
+            table.add_row("taint", ", ".join(str(item) for item in sources))
+        sinks = stamp.get("sinks")
+        if isinstance(sinks, list) and sinks:
+            table.add_row("sink", ", ".join(str(item) for item in sinks))
+        reason = stamp.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            table.add_row("why", reason)
     return Panel(table, title="Approval required", border_style="yellow")

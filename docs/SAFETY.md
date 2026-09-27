@@ -106,6 +106,14 @@ With no runner configured, `swag_run_task` returns a short message instead of fa
 
 `swag run` passes this package's sandbox and permission policy into the loop, and passes the same policy into `build_mcp_client`. The loop asks the policy before every tool call, including MCP tools. A second prompt is not shown for those MCP calls. A hard deny (`decide` returns `deny`) is still enforced, by the loop and again by the MCP client.
 
+## Taint firewall
+
+Tool output is labeled with a source and a trust level. The user goal is trusted. Web pages, MCP results, plugin output, and files from outside the workspace are untrusted. Untrusted data cannot by itself choose a network, destructive, credential, or send action: `escalate` (the default) asks and shows the source, `block` denies, and `auto` denies because it has nobody to ask. `swag run --taint-mode off` turns it off. `swag safety policy` prints the current mode.
+
+MCP tools may publish `_meta.swag` with `risk`, `sinks`, and `source`. That metadata can raise the risk of a call. It cannot mark an MCP or web result as trusted.
+
+This is containment, not immunity. The threat model and the limits are in `docs/TAINT.md`.
+
 ## Interface addition
 
 `MCPServerSpec.headers: dict[str, str]` defaults to `{}`. It carries streamable-HTTP headers from `.mcp.json`. Older specs that omit it still validate.
