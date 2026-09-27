@@ -21,7 +21,7 @@ from swag_bot import __version__
 from swag_bot.config import config_path, load_settings
 from swag_bot.core.cli import app as core_app
 from swag_bot.core.cli import mcp_skill_provider, mcp_task_runner
-from swag_bot.errors import ConfigError
+from swag_bot.errors import ConfigError, SwagError
 from swag_bot.mcp.cli import app as mcp_app
 from swag_bot.mcp.cli import configure_server
 from swag_bot.mcp.cli import serve as mcp_serve
@@ -87,7 +87,15 @@ def version() -> None:
 
 
 @app.command()
-def doctor() -> None:
+def doctor(
+    probe: Annotated[
+        bool,
+        typer.Option(
+            "--probe",
+            help="Probe the configured model and print its cached capability profile.",
+        ),
+    ] = False,
+) -> None:
     """Print the active config and which optional dependencies are installed."""
     console = Console(no_color=True, soft_wrap=True)
     path = config_path()
@@ -106,6 +114,24 @@ def doctor() -> None:
     table.add_row("model.provider", settings.model.provider)
     table.add_row("model.model", settings.model.model)
     table.add_row("model.api_base", settings.model.api_base or "(provider default)")
+    table.add_row("model.harness", settings.model.harness)
+    if settings.model.timeout is None:
+        timeout = "client default (120s)"
+    else:
+        timeout = f"{settings.model.timeout:g}s"
+    table.add_row("model.timeout", timeout)
+    fallback = settings.model.fallback
+    if fallback.provider and fallback.model:
+        fallback_label = f"{fallback.provider}/{fallback.model}"
+    else:
+        fallback_label = "(none)"
+    table.add_row("model.fallback", fallback_label)
+    budget = settings.model.budget
+    table.add_row(
+        "model.budget",
+        f"{budget.max_escalations} escalations, {budget.max_extra_seconds:g}s, "
+        f"${budget.max_cost_usd:g}",
+    )
     table.add_row("autonomy", settings.autonomy.value)
     dirs = ", ".join(settings.plugin_dirs) if settings.plugin_dirs else "(none)"
     table.add_row("plugin_dirs", dirs)
@@ -126,6 +152,22 @@ def doctor() -> None:
         table.add_row(f"binary {binary}", located or "not found")
     console.print(table)
     console.print("API keys are read from the environment and are not displayed.")
+    if probe:
+        from swag_bot.harness.probe import profile_model, render_report
+        from swag_bot.models import get_llm_client
+
+        try:
+            client = get_llm_client(settings)
+            report = profile_model(
+                client=client,
+                provider=settings.model.provider,
+                model=settings.model.model,
+                api_base=settings.model.api_base,
+            )
+        except (ConfigError, SwagError) as exc:
+            console.print(str(exc))
+            raise typer.Exit(code=1) from exc
+        console.print(render_report(report))
 
 
 def main() -> None:

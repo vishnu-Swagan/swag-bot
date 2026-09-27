@@ -23,6 +23,7 @@ from swag_bot.core.fallbacks import LocalSandbox as FallbackSandbox
 from swag_bot.core.loop import LoopEvent, PlanDoVerifyLoop
 from swag_bot.core.tools import register_builtin_tools
 from swag_bot.errors import NotImplementedYet, SwagError
+from swag_bot.harness.session import prepare_harness
 from swag_bot.interfaces import (
     ApprovalPrompter,
     AutonomyLevel,
@@ -88,6 +89,13 @@ def run(
         str,
         typer.Option(help="Workflow engine: python (default), graphbit, or auto."),
     ] = "python",
+    harness: Annotated[
+        str | None,
+        typer.Option(
+            help="Small-model scaffold: auto, off, tiny, standard, or frontier. "
+            "auto probes a real model once and caches the profile."
+        ),
+    ] = None,
 ) -> None:
     """Plan, do, and verify a multi-step task."""
     if not goal.strip():
@@ -129,6 +137,7 @@ def run(
                 concurrency=concurrency,
                 max_attempts=max_attempts,
                 engine=engine,
+                harness=harness,
                 on_event=on_event,
                 announce=typer.echo,
             )
@@ -153,6 +162,7 @@ def execute_goal(
     concurrency: int = 4,
     max_attempts: int = 2,
     engine: str = "python",
+    harness: str | None = None,
     on_event: Callable[[LoopEvent], None] | None = None,
     announce: Callable[[str], None] | None = None,
     settings: Settings | None = None,
@@ -175,8 +185,15 @@ def execute_goal(
         active = active.model_copy(
             update={"model": active.model.model_copy(update={"model": model})}
         )
+    if harness:
+        active = active.model_copy(
+            update={"model": active.model.model_copy(update={"harness": harness})}
+        )
 
     llm = build_llm_client(active)
+    prepared = prepare_harness(active, llm)
+    if prepared.note and announce is not None:
+        announce(prepared.note)
     destination = output_dir if output_dir is not None else default_output_dir()
     destination.mkdir(parents=True, exist_ok=True)
     sandbox = _sandbox(active, destination)
@@ -192,7 +209,7 @@ def execute_goal(
 
     try:
         loop = PlanDoVerifyLoop(
-            llm=llm,
+            llm=prepared.llm,
             sandbox=sandbox,
             memory=memory,
             policy=policy,
@@ -203,6 +220,8 @@ def execute_goal(
             max_attempts=max_attempts,
             concurrency=concurrency,
             engine=engine,
+            scaffold=prepared.scaffold,
+            escalation=prepared.escalation,
         )
     except (ValueError, SwagError):
         if mcp_client is not None:

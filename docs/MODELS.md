@@ -73,7 +73,53 @@ one short prompt.
 
 `build_llm_client(settings)` is the factory `swag run` calls. It returns the
 same client as `get_llm_client(settings)`. `swag model` keeps calling
-`get_llm_client`. No fields were added to `interfaces.py`.
+`get_llm_client`.
+
+### Small-model harness
+
+`model.harness` is `auto` by default. On a real Ollama or LiteLLM client,
+`swag run` probes the model once and caches the profile at
+`$SWAG_HOME/harness/capability.json`. `swag model probe` and
+`swag doctor --probe` do the same. `--force` ignores the cache.
+
+The probe checks three things: a JSON object with keys `ok` and `n`, one
+`echo_token` tool call, and the context length from Ollama `/api/show` when
+that endpoint answers. It does not include a filled-in sample the model can
+copy.
+
+| Profile | When | What changes |
+| --- | --- | --- |
+| `tiny` | About 4B parameters or smaller, or a failed JSON or tool probe | Short prompts, no sample ids, at most 3 steps, one tool per turn, repeated writes blocked, JSON schema where supported, deterministic check that a file-and-run step actually ran |
+| `standard` | A mid-size model that passed the probe | JSON schema where supported. Prompts and tool lists stay as they are |
+| `frontier` | About 30B or a known frontier name, and a passing probe | JSON schema, and up to 8 tool rounds |
+| `off` | Set `model.harness` | No probe, no scaffold, client timeout stays 120 seconds unless `model.timeout` is set |
+
+Ollama's client timeout is 120 seconds, which is short for a 7B or larger
+model on CPU. While the harness is on and `model.timeout` is unset, local
+models use 300 seconds under 7B and 600 seconds at 7B and above. The probe
+itself gives up after 20 seconds so a stuck model does not block the run,
+and a timeout is not cached as a failed profile.
+
+Optional escalation, after the active model has used its attempts:
+
+```toml
+[model]
+harness = "auto"
+timeout = 300
+
+[model.fallback]
+provider = "ollama"
+model = "qwen2.5:7b"
+
+[model.budget]
+max_escalations = 1
+max_extra_seconds = 180
+max_cost_usd = 0
+```
+
+A local fallback costs $0, so `max_cost_usd = 0` still allows it. A cloud
+fallback needs a budget above the estimated call (about $0.01 to $0.03).
+The estimate also has to fit in `max_extra_seconds`.
 
 ## Memory
 

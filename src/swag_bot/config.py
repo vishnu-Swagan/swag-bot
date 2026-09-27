@@ -13,6 +13,16 @@ Example ``config.toml``::
     [model]
     provider = "ollama"
     model = "llama3.2"
+    harness = "auto"
+
+    [model.fallback]
+    provider = "ollama"
+    model = "qwen2.5:7b"
+
+    [model.budget]
+    max_escalations = 1
+    max_extra_seconds = 180
+    max_cost_usd = 0
 
     [memory]
     backend = "memory"
@@ -37,7 +47,7 @@ from pathlib import Path
 from typing import Any
 
 import tomli_w
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from swag_bot.errors import ConfigError
 from swag_bot.interfaces import AutonomyLevel
@@ -51,14 +61,86 @@ class SandboxMode(StrEnum):
     DOCKER = "docker"
 
 
+_HARNESS_MODES = frozenset({"auto", "off", "tiny", "standard", "frontier"})
+
+
+class FallbackModelSettings(BaseModel):
+    """Stronger model used only after a step fails, when the budget allows it.
+
+    An empty ``provider`` or ``model`` turns escalation off. API keys are not
+    stored here.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    provider: str = ""
+    model: str = ""
+    api_base: str | None = None
+
+
+class ModelBudgetSettings(BaseModel):
+    """Limits on escalating a failing step.
+
+    ``max_cost_usd`` of 0 still allows a local fallback, because its estimated
+    cost is 0. A cloud fallback needs a budget above its estimated call cost.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    max_escalations: int = 1
+    max_extra_seconds: float = 180.0
+    max_cost_usd: float = 0.0
+
+    @field_validator("max_escalations")
+    @classmethod
+    def _escalations(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("model.budget.max_escalations must be >= 0")
+        return value
+
+    @field_validator("max_extra_seconds", "max_cost_usd")
+    @classmethod
+    def _non_negative(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("model budget limits must be >= 0")
+        return value
+
+
 class ModelSettings(BaseModel):
-    """Which model to call. ``api_base`` empty or omitted means the provider default."""
+    """Which model to call. ``api_base`` empty or omitted means the provider default.
+
+    ``timeout`` is the HTTP timeout in seconds. Omitted means the client
+    default (120). The small-model harness raises that for local models when
+    ``harness`` is not ``off``. ``harness`` is ``auto``, ``off``, ``tiny``,
+    ``standard``, or ``frontier``.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     provider: str = "ollama"
     model: str = "llama3.2"
     api_base: str | None = None
+    timeout: float | None = None
+    harness: str = "auto"
+    fallback: FallbackModelSettings = Field(default_factory=FallbackModelSettings)
+    budget: ModelBudgetSettings = Field(default_factory=ModelBudgetSettings)
+
+    @field_validator("harness")
+    @classmethod
+    def _harness(cls, value: str) -> str:
+        text = value.strip().lower()
+        if text not in _HARNESS_MODES:
+            raise ValueError(
+                "model.harness must be one of: auto, off, tiny, standard, frontier"
+            )
+        return text
+
+    @field_validator("timeout")
+    @classmethod
+    def _timeout(cls, value: float | None) -> float | None:
+        if value is not None and value <= 0:
+            raise ValueError("model.timeout must be greater than 0")
+        return value
 
 
 class MemorySettings(BaseModel):

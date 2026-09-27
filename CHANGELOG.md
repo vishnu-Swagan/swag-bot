@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Small-model harness. `swag model probe` and `swag doctor --probe` profile the active model (JSON adherence, tool calls, context size) and cache the result. `swag run` adapts prompts, tool exposure, and plan checks to that profile, and can escalate a failing step to `model.fallback` inside `model.budget`. Ollama request timeouts rise above 120 seconds for local models unless `model.timeout` is set.
+
 ## [0.1.0] - 2026-09-27
 
 First tagged release. This is the v0 agent: `swag run` plans a goal, carries

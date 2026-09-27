@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -22,6 +23,7 @@ from swag_bot.interfaces import (
     Step,
     StepResult,
     StepStatus,
+    Tool,
     ToolCall,
     ToolRegistry,
 )
@@ -37,6 +39,7 @@ _KIND = {
 
 OnAction = Callable[[ActionLogEntry], None]
 OnTool = Callable[[str], None]
+ToolPicker = Callable[[Step, Sequence[Tool], int, set[str]], Sequence[Tool]]
 
 
 class StepExecutor:
@@ -54,6 +57,9 @@ class StepExecutor:
         max_tool_rounds: int = 6,
         on_action: OnAction | None = None,
         on_tool: OnTool | None = None,
+        system: str | None = None,
+        pick_tools: ToolPicker | None = None,
+        guard_repeat_writes: bool = False,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -64,17 +70,25 @@ class StepExecutor:
         self.max_tool_rounds = max_tool_rounds
         self.on_action = on_action
         self.on_tool = on_tool
+        self.system = EXECUTOR_SYSTEM if system is None else system
+        self.pick_tools = pick_tools
+        self.guard_repeat_writes = guard_repeat_writes
+        self._trace_lock = threading.Lock()
+        self.traces: dict[str, list[str]] = {}
 
     def execute(self, step: Step, *, attempt: int, feedback: str | None) -> StepResult:
         """Run ``step`` once. The caller verifies the returned observation."""
-        tool_specs = list(self.tools.list_tools())
         messages: list[Message] = [
-            Message.system(EXECUTOR_SYSTEM),
+            Message.system(self.system),
             Message.user(_user_prompt(step, attempt, feedback, self._memories(step))),
         ]
         observation = ""
         hit_limit = True
-        for _ in range(self.max_tool_rounds):
+        called: set[str] = set()
+        for round_index in range(self.max_tool_rounds):
+            tool_specs = list(self.tools.list_tools())
+            if self.pick_tools is not None:
+                tool_specs = list(self.pick_tools(step, tool_specs, round_index, set(called)))
             response = self.llm.chat(
                 messages,
                 tools=tool_specs or None,
@@ -88,7 +102,10 @@ class StepExecutor:
                 hit_limit = False
                 break
             for call in message.tool_calls:
-                messages.append(Message.tool(call.id, self._invoke(call)))
+                outcome = self._outcome(call, called)
+                called.add(call.name)
+                self._remember_trace(step.id, call.name, outcome)
+                messages.append(Message.tool(call.id, outcome))
         if hit_limit:
             note = "Stopped after the tool-call limit."
             observation = f"{observation}\n{note}".strip()
@@ -104,6 +121,24 @@ class StepExecutor:
         except Exception:
             return []
         return [item.content for item in hits]
+
+    def trace_for(self, step_id: str) -> list[str]:
+        """Tool outcomes recorded while ``step_id`` ran. Empty if it used no tools."""
+        with self._trace_lock:
+            return list(self.traces.get(step_id, []))
+
+    def _remember_trace(self, step_id: str, name: str, outcome: str) -> None:
+        line = f"{name}: {outcome}"
+        with self._trace_lock:
+            self.traces.setdefault(step_id, []).append(line)
+
+    def _outcome(self, call: ToolCall, called: set[str]) -> str:
+        if self.guard_repeat_writes and call.name == "write_file" and call.name in called:
+            return (
+                "Already wrote a file in this step. Do not write it again. "
+                "Run it if the step says to run it."
+            )
+        return self._invoke(call)
 
     def _invoke(self, call: ToolCall) -> str:
         arguments = dict(call.arguments)

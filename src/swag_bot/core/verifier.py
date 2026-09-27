@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from swag_bot.core.parsing import PlanParseError, as_bool, extract_json
 from swag_bot.core.prompts import VERIFIER_SYSTEM
+from swag_bot.core.structured import chat_structured
 from swag_bot.interfaces import LLMClient, Message, Step, StepResult
 
 
@@ -21,17 +24,28 @@ class Verdict:
 class Verifier:
     """One LLM call per check. A missing JSON verdict is a failed check."""
 
-    def __init__(self, llm: LLMClient, *, model: str | None = None) -> None:
+    def __init__(
+        self,
+        llm: LLMClient,
+        *,
+        model: str | None = None,
+        system: str | None = None,
+        response_schema: Mapping[str, Any] | None = None,
+    ) -> None:
         self.llm = llm
         self.model = model
+        self.system = VERIFIER_SYSTEM if system is None else system
+        self.response_schema = response_schema
 
     def check(self, step: Step, result: StepResult) -> Verdict:
-        response = self.llm.chat(
+        response = chat_structured(
+            self.llm,
             [
-                Message.system(VERIFIER_SYSTEM),
+                Message.system(self.system),
                 Message.user(_prompt(step, result)),
             ],
             model=self.model,
+            response_schema=self.response_schema,
         )
         try:
             payload = extract_json(response.message.content or "")

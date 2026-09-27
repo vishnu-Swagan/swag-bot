@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import importlib
 import json
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, cast
 
 from pydantic import ValidationError
@@ -103,6 +103,28 @@ class LiteLLMClient:
         response = self.chat([Message.user(prompt)], model=model)
         return response.message.content or ""
 
+    def complete_structured(
+        self,
+        messages: Sequence[Message],
+        schema: Mapping[str, Any],
+        *,
+        model: str | None = None,
+    ) -> ChatResponse:
+        """One completion with a JSON-schema ``response_format``.
+
+        Providers that reject the schema raise ``ModelError``. The harness
+        retries without the schema when the error is about the format.
+        """
+        chosen = model or self.model
+        return self._complete(
+            messages,
+            tools=None,
+            model=chosen,
+            native_tools=False,
+            stream=False,
+            response_schema=schema,
+        )
+
     def stream(
         self,
         messages: Sequence[Message],
@@ -143,8 +165,15 @@ class LiteLLMClient:
         model: str,
         native_tools: bool,
         stream: bool,
+        response_schema: Mapping[str, Any] | None = None,
     ) -> ChatResponse:
-        raw = self._invoke(messages, tools if native_tools else None, model, stream=stream)
+        raw = self._invoke(
+            messages,
+            tools if native_tools else None,
+            model,
+            stream=stream,
+            response_schema=response_schema,
+        )
         reported_tools = tools if native_tools else None
         return _response_from_litellm(raw, self.litellm_model(model), reported_tools)
 
@@ -173,6 +202,7 @@ class LiteLLMClient:
         model: str,
         *,
         stream: bool,
+        response_schema: Mapping[str, Any] | None = None,
     ) -> Any:
         fn = self._completion_fn or _load_litellm_completion()
         kwargs: dict[str, Any] = {
@@ -184,6 +214,14 @@ class LiteLLMClient:
         if tools:
             kwargs["tools"] = tools_as_openai(tools)
             kwargs["tool_choice"] = "auto"
+        elif response_schema is not None:
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "swag_structured",
+                    "schema": dict(response_schema),
+                },
+            }
         if self.api_base:
             kwargs["api_base"] = self.api_base
         # Read the key at call time. Do not store it on self.

@@ -209,6 +209,30 @@ def test_stream_falls_back_without_buffering_a_single_chunk() -> None:
     assert transport.calls[1]["stream"] is True
 
 
+def test_complete_structured_sends_json_schema_as_format() -> None:
+    transport = ScriptedTransport()
+    transport.push(
+        200,
+        {"model": "qwen2.5:3b", "message": {"role": "assistant", "content": '{"ok": true}'}},
+    )
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+    client = _client(transport, model="qwen2.5:3b")
+    text = client.complete_structured([Message.user("probe")], schema).message.content
+    assert text == '{"ok": true}'
+    body = transport.calls[0]["body"]
+    assert isinstance(body, dict)
+    assert body["format"] == schema
+    assert "tools" not in body
+
+
+def test_show_model_reads_context_length() -> None:
+    transport = ScriptedTransport()
+    transport.push(200, {"model_info": {"qwen2.context_length": 32768}})
+    client = _client(transport, model="qwen2.5:3b")
+    assert client.show_model() == {"model_info": {"qwen2.context_length": 32768}}
+    assert transport.calls[0]["url"] == "http://ollama.test/api/show"
+
+
 def test_list_models_and_unreachable() -> None:
     transport = ScriptedTransport()
     transport.push(200, {"models": [{"name": "llama3.2:latest"}, {"model": "qwen2.5:7b"}]})

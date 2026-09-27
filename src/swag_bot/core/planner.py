@@ -3,14 +3,30 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from swag_bot.core.parsing import PlanParseError, extract_json
 from swag_bot.core.prompts import PLANNER_SYSTEM
+from swag_bot.core.structured import chat_structured
 from swag_bot.interfaces import LLMClient, Message, Step, TaskPlan
 
 _WS = re.compile(r"\s+")
+_SAMPLE_IDS = frozenset(
+    {
+        "short-id",
+        "step-id",
+        "example",
+        "example-id",
+        "your-id",
+        "sample",
+        "sample-id",
+        "todo",
+        "id",
+    }
+)
+_SAMPLE_TITLES = frozenset({"what this step does"})
+_SAMPLE_INSTRUCTION = "how to do it with the available tools"
 
 
 class Planner:
@@ -23,11 +39,17 @@ class Planner:
         model: str | None = None,
         tool_names: Sequence[str] = (),
         context: str = "",
+        system: str | None = None,
+        response_schema: Mapping[str, Any] | None = None,
+        strict: bool = False,
     ) -> None:
         self.llm = llm
         self.model = model
         self.tool_names = list(tool_names)
         self.context = context
+        self.system = PLANNER_SYSTEM if system is None else system
+        self.response_schema = response_schema
+        self.strict = strict
 
     def create(self, goal: str, *, max_steps: int) -> TaskPlan:
         """Return a plan for ``goal``. Fall back to one step if the model is unreadable."""
@@ -37,7 +59,12 @@ class Planner:
                 payload = self._ask(
                     _create_prompt(goal, self.tool_names, max_steps, feedback, self.context)
                 )
-                steps = steps_from_payload(payload, limit=max_steps, existing_ids=set())
+                steps = steps_from_payload(
+                    payload,
+                    limit=max_steps,
+                    existing_ids=set(),
+                    strict=self.strict,
+                )
             except PlanParseError as exc:
                 feedback = str(exc)
                 continue
@@ -66,15 +93,22 @@ class Planner:
             prompt = _revise_prompt(plan, failures, max_new, feedback, self.context)
             try:
                 payload = self._ask(prompt)
-                return steps_from_payload(payload, limit=max_new, existing_ids=set(existing))
+                return steps_from_payload(
+                    payload,
+                    limit=max_new,
+                    existing_ids=set(existing),
+                    strict=self.strict,
+                )
             except PlanParseError as exc:
                 feedback = str(exc)
         return []
 
     def _ask(self, user: str) -> Any:
-        response = self.llm.chat(
-            [Message.system(PLANNER_SYSTEM), Message.user(user)],
+        response = chat_structured(
+            self.llm,
+            [Message.system(self.system), Message.user(user)],
             model=self.model,
+            response_schema=self.response_schema,
         )
         try:
             return extract_json(response.message.content or "")
@@ -97,15 +131,26 @@ def steps_from_payload(
     *,
     limit: int,
     existing_ids: set[str],
+    strict: bool = False,
 ) -> list[Step]:
     """Validate a model payload into steps.
 
     ``existing_ids`` are ids already on the plan (a replan). New ids are kept
     unique against that set. Unknown dependency ids raise ``PlanParseError``.
+
+    ``strict`` rejects a plan that copied the sample id or sample wording, and
+    rejects a plan that is longer than ``limit`` instead of silently dropping
+    the tail. Small models were copying ``short-id`` and splitting a one-file
+    task into more steps than the limit.
     """
     raw_steps = _raw_steps(payload)
     if limit < 1:
         raise PlanParseError("the step limit must be at least 1")
+    if strict and len(raw_steps) > limit:
+        raise PlanParseError(
+            f"the plan has {len(raw_steps)} steps and the limit is {limit}. "
+            "Use fewer steps. A goal that writes one file and runs it is one step."
+        )
     selected = raw_steps[:limit]
     used = set(existing_ids)
     built: list[tuple[Step, list[str]]] = []
@@ -113,10 +158,16 @@ def steps_from_payload(
         if not isinstance(item, dict):
             raise PlanParseError(f"step {index} must be an object")
         requested = _text(item.get("id")) or f"step-{len(used) + 1}"
-        step_id = _unique_id(requested, used)
-        title = _text(item.get("title")) or step_id
+        title = _text(item.get("title")) or requested
         criteria = _text(item.get("success_criteria") or item.get("successCriteria"))
         instruction = _fold_criteria(_text(item.get("instruction")), criteria)
+        if strict and _is_sample(requested, title, instruction):
+            raise PlanParseError(
+                "the plan copied a sample id or sample wording. "
+                "Choose ids and wording for this goal."
+            )
+        step_id = _unique_id(requested, used)
+        title = title or step_id
         depends = _depends(item)
         built.append((Step(id=step_id, title=title, instruction=instruction), depends))
     known = set(existing_ids)
@@ -183,6 +234,15 @@ def _text(value: Any) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _is_sample(step_id: str, title: str, instruction: str) -> bool:
+    token = _WS.sub("-", step_id.strip()).casefold()
+    if token in _SAMPLE_IDS:
+        return True
+    if title.strip().casefold() in _SAMPLE_TITLES:
+        return True
+    return _SAMPLE_INSTRUCTION in instruction.casefold()
 
 
 def _create_prompt(

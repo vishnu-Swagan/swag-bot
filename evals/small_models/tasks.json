@@ -1,0 +1,102 @@
+[
+  {
+    "id": "fib-py",
+    "goal": "Write fib.py that prints the 10th Fibonacci number, run it, and check the output.",
+    "needs": ["write_file", "run_shell"]
+  },
+  {
+    "id": "hello-file",
+    "goal": "Create hello.txt containing the single word hello, then read it back.",
+    "needs": ["write_file", "read_file"]
+  },
+  {
+    "id": "sum-script",
+    "goal": "Write add.py that prints 2+2, run it with python, and confirm it prints 4.",
+    "needs": ["write_file", "run_shell"]
+  },
+  {
+    "id": "two-files",
+    "goal": "Write a.txt with alpha and b.txt with beta. Do not run a shell command.",
+    "needs": ["write_file"]
+  },
+  {
+    "id": "list-dir",
+    "goal": "Run ls in the workdir and report the file names you see.",
+    "needs": ["run_shell"]
+  },
+  {
+    "id": "pytest-one",
+    "goal": "Write test_add.py with one pytest test that 1+1 equals 2, then run pytest -q on it.",
+    "needs": ["write_file", "run_shell"]
+  },
+  {
+    "id": "json-note",
+    "goal": "Write note.json with keys title and done. title is lunch, done is false. Then read the file.",
+    "needs": ["write_file", "read_file"]
+  },
+  {
+    "id": "rename-via-shell",
+    "goal": "Write old.txt with data, then use the shell to copy it to new.txt, then read new.txt.",
+    "needs": ["write_file", "run_shell", "read_file"]
+  },
+  {
+    "id": "failing-command",
+    "goal": "Run python -c 'import missing_mod' and report the exit code. Do not claim success if it fails.",
+    "needs": ["run_shell"]
+  },
+  {
+    "id": "markdown-list",
+    "goal": "Write todos.md with three markdown checklist items, then read it back.",
+    "needs": ["write_file", "read_file"]
+  },
+  {
+    "id": "count-lines",
+    "goal": "Write lines.txt with exactly four lines, run wc -l lines.txt, and report the count.",
+    "needs": ["write_file", "run_shell"]
+  },
+  {
+    "id": "env-echo",
+    "goal": "Run a shell command that prints the working directory and stop. Do not write a file.",
+    "needs": ["run_shell"]
+  },
+  {
+    "id": "csv-total",
+    "goal": "Write costs.csv with two rows of numbers, write total.py that prints their sum, and run total.py.",
+    "needs": ["write_file", "run_shell"]
+  },
+  {
+    "id": "fix-syntax",
+    "goal": "Write broken.py that is invalid Python, run it, then fix the file so python broken.py exits 0.",
+    "needs": ["write_file", "run_shell"]
+  },
+  {
+    "id": "nested-dir",
+    "goal": "Write out/report.txt containing the word ready, then read out/report.txt.",
+    "needs": ["write_file", "read_file"]
+  },
+  {
+    "id": "grep-word",
+    "goal": "Write story.txt containing the word lantern, then run a shell search that shows that line.",
+    "needs": ["write_file", "run_shell"]
+  },
+  {
+    "id": "no-overwrite",
+    "goal": "Write once.txt containing first. Read it. Do not write the file a second time.",
+    "needs": ["write_file", "read_file"]
+  },
+  {
+    "id": "multi-step-order",
+    "goal": "Write draft.txt with a sentence, copy it to final.txt with the shell, and read final.txt.",
+    "needs": ["write_file", "run_shell", "read_file"]
+  },
+  {
+    "id": "quiet-success",
+    "goal": "Write empty_ok.py that exits without printing, run it, and confirm the exit code is 0.",
+    "needs": ["write_file", "run_shell"]
+  },
+  {
+    "id": "plan-one-step",
+    "goal": "Write ping.txt containing ping. Keep the plan to a single step.",
+    "needs": ["write_file"]
+  }
+]

@@ -81,7 +81,10 @@ To pin that in `$SWAG_HOME/config.toml` (default directory `~/.swag`):
 
 ```bash
 swag model set ollama/llama3.2
+swag model probe
 ```
+
+`swag model probe` asks the active model for one JSON object and one tool call, reads the context length when the provider reports it, and caches the result in `$SWAG_HOME/harness/capability.json`. `swag run` does the same probe once when `model.harness` is `auto` (the default) and a real model client is in use. A model at or under about 4B parameters gets a tighter scaffold: shorter prompts with no sample values to copy, one tool at a time, at most three steps, and JSON-schema output where the provider supports it. A failing step can be retried on `model.fallback` when `model.budget` allows the extra time and cost. Local fallbacks cost nothing, so a budget of `$0` still allows them. Set `model.harness` to `off` to keep the original prompts and the 120 second request timeout.
 
 ## Quickstart with a bring-your-own-key provider
 

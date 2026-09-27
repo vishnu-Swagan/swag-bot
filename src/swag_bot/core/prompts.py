@@ -54,3 +54,35 @@ Write a short markdown summary of a finished task for the person who asked.
 Lead with whether the goal was met. Mention failed or skipped steps and why.
 Do not invent results that are not in the step record.
 """
+
+# Shorter prompts for a tiny scaffold. They describe the shape in words and
+# do not include a filled-in sample. Small models were copying `"id": "short-id"`
+# out of the standard planner prompt and treating it as the plan.
+PLANNER_SYSTEM_TINY = f"""{PLANNER_PREFIX}
+Reply with one JSON object and no other text.
+The object has one key, steps, whose value is an array of step objects.
+Each step has id, title, instruction, and depends_on.
+id is a new short word for this goal, with no spaces.
+title is one line about this goal.
+instruction says what to do, then a line that starts with "Done when:".
+depends_on is an array of earlier ids from this plan, or an empty array.
+Use as few steps as possible. Writing one file and running it is one step.
+Stay at or under the step limit.
+Do not copy wording from this prompt into the JSON values.
+"""
+
+EXECUTOR_SYSTEM_TINY = f"""{EXECUTOR_PREFIX}
+Do the one step below. Use a tool when the step needs a file or a command.
+Call each tool once. If you write a file the step also says to run, run it next.
+Then stop. Reply with one sentence about what the tool returned.
+Do not rewrite a file you already wrote. Do not invent command output.
+If an action is denied, say so and stop.
+"""
+
+VERIFIER_SYSTEM_TINY = f"""{VERIFIER_PREFIX}
+Reply with one JSON object and no other text.
+The object has passed (a boolean), reason (a string), and replan (a boolean).
+passed is true only when the observation shows the step is done.
+When passed is true, replan is false.
+Do not copy wording from this prompt into the values.
+"""
