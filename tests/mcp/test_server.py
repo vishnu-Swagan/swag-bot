@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import time
+
 import pytest
 
 pytest.importorskip("mcp")
@@ -31,7 +34,14 @@ def test_serve_mcp_lists_and_calls_injected_tools() -> None:
         tools = await server.list_tools()
         return [tool.name for tool in tools]
 
-    assert set(anyio.run(names)) == {"swag_run_task", "swag_list_skills"}
+    assert set(anyio.run(names)) == {
+        "swag_run_task",
+        "swag_list_skills",
+        "swag_start_task",
+        "swag_task_status",
+        "swag_task_result",
+        "swag_setup_status",
+    }
 
     client = SwagMCPClient(
         [MCPServerSpec(name="swag", transport="stdio")],
@@ -46,6 +56,21 @@ def test_serve_mcp_lists_and_calls_injected_tools() -> None:
     catalog = client.call_tool("swag__swag_list_skills", {})
     assert "pdf-processing" in catalog
     assert "Read PDFs" in catalog
+    status = json.loads(client.call_tool("swag__swag_setup_status", {}))
+    assert "ready" in status
+    assert "reason" in status
+    started = json.loads(client.call_tool("swag__swag_start_task", {"goal": "ship it"}))
+    assert started["status"] == "running"
+    view = started
+    for _ in range(40):
+        view = json.loads(client.call_tool("swag__swag_task_status", {"run_id": started["run_id"]}))
+        if view["status"] != "running":
+            break
+        time.sleep(0.05)
+    assert view["status"] == "done"
+    assert view["summary"] == "done: ship it"
+    missing = json.loads(client.call_tool("swag__swag_task_result", {"run_id": "missing"}))
+    assert missing["error"] == "unknown run_id"
     client.close()
 
 

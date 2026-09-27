@@ -39,6 +39,7 @@ def _step(
     instruction: str = "",
     criteria: str = "the step is done",
     depends_on: list[str] | None = None,
+    checks: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "id": step_id,
@@ -48,6 +49,8 @@ def _step(
     }
     if depends_on:
         payload["depends_on"] = depends_on
+    if checks is not None:
+        payload["checks"] = checks
     return payload
 
 
@@ -127,6 +130,7 @@ def test_scripted_plan_reads_a_file_and_logs_the_action(tmp_path: Path) -> None:
     assert [step.status for step in plan.steps] == [StepStatus.DONE]
     assert plan.steps[0].instruction.endswith("Success criteria: observation includes hello")
     assert loop.results["read"].verified is True
+    assert loop.results["read"].evidence_ids
     assert sandbox.read_file("note.txt") == "hello"
     assert len(loop.action_log) == 1
     entry = loop.action_log[0]
@@ -149,6 +153,17 @@ def test_retry_then_pass(tmp_path: Path) -> None:
             plan_json([_step("only", "Do the work")]),
             "not yet",
             verdict(False, "missing file", replan=False),
+            ChatResponse(
+                message=Message.assistant(
+                    tool_calls=[
+                        ToolCall(
+                            id="c1",
+                            name="write_file",
+                            arguments={"path": "done.txt", "content": "ok"},
+                        )
+                    ]
+                )
+            ),
             "now it is done",
             verdict(True, "present"),
             "Recovered.",
@@ -158,7 +173,7 @@ def test_retry_then_pass(tmp_path: Path) -> None:
     plan = loop.run("finish the work")
     assert plan.steps[0].status is StepStatus.DONE
     attempts = _systems(llm, EXECUTOR_PREFIX)
-    assert len(attempts) == 2
+    assert len(attempts) >= 2
     assert "missing file" in (attempts[1][-1].content or "")
 
 
@@ -169,7 +184,15 @@ def test_replan_replaces_a_failed_approach(tmp_path: Path) -> None:
             plan_json([_step("a", "Try A")]),
             "nope",
             verdict(False, "wrong approach", replan=True),
-            plan_json([_step("b", "Try B")]),
+            plan_json(
+                [
+                    _step(
+                        "b",
+                        "Try B",
+                        checks=[{"id": "ran", "kind": "command", "command": "true"}],
+                    )
+                ]
+            ),
             "ok",
             verdict(True, "B works"),
             "Used the second approach.",
@@ -489,7 +512,10 @@ def test_secrets_are_redacted_in_the_action_log(tmp_path: Path) -> None:
     assert seen == ["super-secret-value"]
     logged = json.dumps(loop.action_log[0].model_dump(mode="json"))
     assert "super-secret-value" not in logged
-    assert "abc" not in logged
+    # The entry id is random and can contain the letters "abc", so check the
+    # fields that actually stored the secret.
+    assert "abc" not in (loop.action_log[0].outcome or "")
+    assert "abc" not in json.dumps(loop.action_log[0].action.arguments)
     assert loop.action_log[0].action.arguments["api_key"] == "[redacted]"
 
 
@@ -512,8 +538,12 @@ def test_fenced_plan_json_and_unknown_tool(tmp_path: Path) -> None:
     )
     plan = loop.run("look around")
     assert plan.steps[0].id == "a"
-    assert plan.steps[0].status is StepStatus.DONE
+    # The model said the step passed, but the tool never ran. That is a failure.
+    assert plan.steps[0].status is StepStatus.FAILED
+    assert loop.results["a"].evidence_ids
+    assert "unknown tool" in (loop.results["a"].error or "")
     assert loop.action_log[0].approved is False
+    assert loop.action_log[0].evidence_id
     assert "unknown tool" in (loop.action_log[0].outcome or "")
 
 

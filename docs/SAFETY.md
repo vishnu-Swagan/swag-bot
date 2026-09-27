@@ -21,6 +21,13 @@ Docker runs a throwaway container (`--rm`) with the workdir mounted at `/work`. 
 
 `LocalSandbox` is not a container. It is the fallback when Docker is missing.
 
+The browser plugin does not run Chromium inside this sandbox. Headless
+Chromium needs a network and libraries the sandbox image does not have, and
+turning the network on for the container would weaken every shell command in
+the same run. `swag browser-mcp` is a host process. File and shell tools
+still use the sandbox. Browser tool calls still go through the permission
+policy below. See `plugins/browser/README.md`.
+
 ## Permissions
 
 `build_permission_policy(settings)` uses `settings.autonomy` and the active grants from `$SWAG_HOME/grants.json`.
@@ -30,7 +37,8 @@ Approving `swag plugin install`, or passing `--yes`, writes the plugin's request
 | Autonomy | When it prompts |
 | --- | --- |
 | `ask-always` | Every action, including reads. |
-| `ask-risky` | Anything that is not a pure read. |
+| `ask-risky` | Anything that is not a pure read. This is the default. |
+| `ask-irreversible` | Only irreversible actions: the point of no return. Reversible workspace edits and compensable actions are not prompted. |
 | `auto` | Never. Actions are still logged. A hard deny still applies. |
 
 Classification raises risk; it never lowers `destructive`.
@@ -46,13 +54,71 @@ Classification raises risk; it never lowers `destructive`.
 
 `requires_approval` never prompts less often than `default_requires_approval`. `decide` can also return `deny` with no prompt when an action is tagged with `arguments["plugin"]` and that plugin does not hold the matching active grant (`filesystem.read`, `filesystem.write`, `shell`, `network`, `mcp`, `secrets`, or a custom dotted name). Install grants do not lower that deny for a permission the user did not approve, and they do not lower a `destructive` classification.
 
+A tool may carry `risk_hint`, `permission_hint`, and `plugin`. The executor copies those from the tool spec onto the action and drops any copy the model put in the arguments. `risk_hint` is how a browser read stays a read, and how navigation stays network, instead of every MCP call being treated as a generic shell. Text that deletes, spends, or calls the network can still raise the risk. `classify` does not lower `destructive`. Hints are applied only for MCP servers tagged with a plugin, and only when the tool publishes a `swag` metadata block. A server listed only in `mcp.json` cannot lower its own risk that way.
+
 `build_prompter(settings)` is a rich terminal prompt. The default answer is no.
 
 `authorize(...)` redacts secrets, asks the policy, maybe prompts, and appends a log line. `approver` is `policy`, `user`, or `auto`.
 
+## Undo ledger
+
+Before every file write and every shell command, Swag Bot stores a content-addressed snapshot of the sandbox workdir. The blobs are SHA-256 files under `$SWAG_HOME/undo`, outside the workdir, so a shell `rm` inside the task directory cannot delete the history that would restore it. Unchanged files are stored once and reused by hash. `git` is not required, and the project's own `.git` directory is just more files in the snapshot when it sits inside the workdir.
+
+```bash
+swag undo
+swag undo --to edit-files
+swag undo --run <run-id> --to edit-files
+```
+
+`swag undo` restores the workspace to the start of the most recent run, including files a shell command edited, created, or deleted. `--to` restores the workspace to the start of that step and undoes that step and every step that started after it. A failed step is rolled back the same way when `undo.auto_rollback` is true (the default). Set `undo.enabled = false` to turn snapshots off. Neither setting changes the default autonomy, which stays `ask-risky`.
+
+`ask-irreversible` is a separate approval mode. It asks only when the action is irreversible. `ask-risky` still asks for ordinary writes and shell commands, and the approval panel marks an irreversible action as a point of no return.
+
+External side effects are not in the snapshot. A plugin or MCP tool can declare an inverse:
+
+```json
+{
+  "name": "issues",
+  "compensations": [
+    {
+      "tool": "create_issue",
+      "inverse": "close_issue",
+      "description": "Close the issue this tool created.",
+      "argument_map": {"number": "number"},
+      "entrypoint": "my_plugin.compensate:close_issue"
+    }
+  ]
+}
+```
+
+An MCP tool can put the same object in its metadata as `swagCompensation`. `argument_map` copies stored arguments onto the inverse (`"outcome"` uses the tool result). `entrypoint` is `module:function`. The function receives the resolved argument dict. Undo runs compensations in reverse order. A callable registered in the same process with `CompensationRegistry.register` runs too.
+
+### Limits
+
+These are real limits, not edge cases to ignore:
+
+- The snapshot is the sandbox workdir only. A shell command can still change files outside that directory, talk to the network, send mail, spend money, or start another process. Those effects are classified irreversible (or compensable, when an inverse actually runs). Undo lists irreversible actions. It does not claim to have undone them.
+- Shell classification is a heuristic. `curl`, `git push`, a redirect onto an absolute path, and `rm /somewhere` are treated as irreversible. A Python one-liner that opens an absolute path can be missed. Mixed commands (`echo hi > notes.txt` and `curl` in one line) are irreversible, and the workspace half is still restored because the snapshot was taken first.
+- A compensation declared without a callable is reported as not run. Undo does not invent the inverse.
+- `entrypoint` imports and runs plugin code at undo time. That is the same trust as installing the plugin.
+- Sockets, devices, and fifos are not restored. Symlinks are restored as links and are not followed, so a link to a file outside the workdir does not snapshot that outside file.
+- Steps that run at the same time share one workdir. `swag undo --to STEP` restores the tree from the moment that step started, which also reverts later edits, including edits from a step that ran in parallel after that snapshot. `auto_rollback` has the same effect.
+- Memory writes and the append-only action log are not rolled back. The undo ledger itself is rewritten when a compensation is marked done; it is not an append-only audit log. `$SWAG_HOME/actions.jsonl` still is.
+- Snapshots record bytes. They do not record why the agent did the work, and they are not a substitute for committing the result you meant to keep.
+
 ## Action log
 
-`$SWAG_HOME/actions.jsonl` is append-only. `swag safety log` prints it. `swag safety policy` prints the autonomy level, the risk rules, active plugin grants, and any grants suspended because the plugin is disabled. `swag safety grant` and `swag safety revoke` edit grants. Rewriting active grants keeps the `suspended` object, so a manual grant does not drop a disabled plugin's saved permissions.
+`$SWAG_HOME/actions.jsonl` is an append-only index. `swag run` appends every
+action there as it happens, and also writes the same rows to
+`<output-dir>/action-log.jsonl`. The full per-run record, including tool
+evidence and acceptance checks, is `<output-dir>/run.jsonl` (see
+`docs/spec/evidence-contract.md`). `swag safety log` prints the home index,
+so a run and the safety log show the same actions. `swag safety policy`
+prints the autonomy level, the risk rules, active plugin grants, and any
+grants suspended because the plugin is disabled. `swag safety grant` and
+`swag safety revoke` edit grants. Rewriting active grants keeps the
+`suspended` object, so a manual grant does not drop a disabled plugin's
+saved permissions.
 
 Secrets are redacted before they are stored: `sk-...` keys, bearer tokens, AWS-style access key ids, GitHub tokens, `password=` / `token=` / `api_key=` assignments, and any value under a secret-named key.
 
@@ -105,6 +171,14 @@ Tools:
 With no runner configured, `swag_run_task` returns a short message instead of failing closed on a missing core. The root `swag serve-mcp` command (and `swag mcp serve`) installs the real plan-do-verify runner and the plugin skill list. This package still does not import `core` or `plugins`; the callables are injected from the composition root.
 
 `swag run` passes this package's sandbox and permission policy into the loop, and passes the same policy into `build_mcp_client`. The loop asks the policy before every tool call, including MCP tools. A second prompt is not shown for those MCP calls. A hard deny (`decide` returns `deny`) is still enforced, by the loop and again by the MCP client.
+
+## Taint firewall
+
+Tool output is labeled with a source and a trust level. The user goal is trusted. Web pages, MCP results, plugin output, and files from outside the workspace are untrusted. Untrusted data cannot by itself choose a network, destructive, credential, or send action: `escalate` (the default) asks and shows the source, `block` denies, and `auto` denies because it has nobody to ask. `swag run --taint-mode off` turns it off. `swag safety policy` prints the current mode.
+
+MCP tools may publish `_meta.swag` with `risk`, `sinks`, and `source`. That metadata can raise the risk of a call. It cannot mark an MCP or web result as trusted.
+
+This is containment, not immunity. The threat model and the limits are in `docs/TAINT.md`.
 
 ## Interface addition
 

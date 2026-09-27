@@ -7,6 +7,7 @@ those packages.
 
 from __future__ import annotations
 
+import importlib
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -15,35 +16,69 @@ from typing import Annotated, Any
 
 import typer
 
-from swag_bot.config import Settings, load_settings
+from swag_bot.config import EscalationSettings, Settings, TaintMode, load_settings
 from swag_bot.core.artifacts import default_output_dir, write_run_artifacts
-from swag_bot.core.display import TaskListView, display_status
+from swag_bot.core.bundle.cli import bundle_app, replay_command
+from swag_bot.core.bundle.record import RunRecorder
+from swag_bot.core.display import PromptSuspender, RunProgress, TaskListView
+from swag_bot.core.escalation import EscalationController, build_escalation
 from swag_bot.core.fallbacks import FallbackMemory, FallbackPolicy, FallbackPrompter
 from swag_bot.core.fallbacks import LocalSandbox as FallbackSandbox
 from swag_bot.core.loop import LoopEvent, PlanDoVerifyLoop
+from swag_bot.core.memory_journal import (
+    append_remembered,
+    commit_memory,
+    normalize_memory_mode,
+    provenance_metadata,
+    recall_lines,
+)
+from swag_bot.core.reversibility import (
+    ReversibilityClassifier,
+    StubReversibilityClassifier,
+    adapt_classifier,
+)
 from swag_bot.core.tools import register_builtin_tools
-from swag_bot.errors import NotImplementedYet, SwagError
+from swag_bot.errors import ConfigError, NotImplementedYet, SwagError
+from swag_bot.harness.session import prepare_harness
 from swag_bot.interfaces import (
+    ActionLogEntry,
     ApprovalPrompter,
     AutonomyLevel,
+    LLMClient,
     MCPServerSpec,
+    MemoryItem,
     MemoryStore,
     PermissionPolicy,
     PluginRegistry,
     Sandbox,
     SkillMeta,
     StepStatus,
+    TaintTracker,
+    ToolRegistry,
+    TrustLevel,
 )
 from swag_bot.mcp import build_mcp_client
 from swag_bot.mcp.client import SwagMCPClient
 from swag_bot.mcp.config import load_mcp_servers
+from swag_bot.mcp.registry import compensation_annotation
 from swag_bot.memory import build_memory_store
 from swag_bot.models import build_llm_client
+from swag_bot.models.factory import split_provider_model
 from swag_bot.plugins import build_registry
 from swag_bot.registry import InMemoryToolRegistry
-from swag_bot.safety import build_permission_policy, build_prompter, build_sandbox
+from swag_bot.safety import (
+    build_permission_policy,
+    build_prompter,
+    build_sandbox,
+    build_taint_tracker,
+)
+from swag_bot.safety.compensation import CompensationRegistry
+from swag_bot.safety.log import ActionLog
+from swag_bot.safety.undo import UndoLedger, UndoSandbox
 
 app = typer.Typer(help="Plan, do, and verify a multi-step task.")
+app.command("replay")(replay_command)
+app.add_typer(bundle_app, name="bundle")
 
 
 @dataclass(frozen=True)
@@ -54,6 +89,7 @@ class GoalResult:
     output_dir: Path
     exit_code: int
     engine_note: str
+    bundle_dir: Path | None = None
 
 
 @app.command("run")
@@ -67,7 +103,7 @@ def run(
     output_dir: Annotated[
         Path | None,
         typer.Option(
-            help="Directory for plan.json, action-log.jsonl, and summary.md. "
+            help="Directory for plan.json, action-log.jsonl, run.jsonl, and summary.md. "
             "Defaults to ./swag-output/<UTC timestamp>."
         ),
     ] = None,
@@ -88,8 +124,64 @@ def run(
         str,
         typer.Option(help="Workflow engine: python (default), graphbit, or auto."),
     ] = "python",
+    strict_plan: Annotated[
+        bool,
+        typer.Option(
+            "--strict-plan",
+            help="Stop if the model plan cannot be parsed. Do not fall back to one step.",
+        ),
+    ] = False,
+    memory_mode: Annotated[
+        str | None,
+        typer.Option(
+            "--memory-mode",
+            help="ask, auto, or off. Overrides memory.mode for this run.",
+        ),
+    ] = None,
+    evidence: Annotated[
+        bool | None,
+        typer.Option(
+            "--evidence/--no-evidence",
+            help="Require cited evidence for a passing step. Default follows config.",
+        ),
+    ] = None,
+    taint_mode: Annotated[
+        str | None,
+        typer.Option(
+            "--taint-mode",
+            help="Taint firewall: escalate (ask, show the source), block, or off.",
+        ),
+    ] = None,
+    escalate: Annotated[
+        bool | None,
+        typer.Option(
+            "--escalate/--no-escalate",
+            help=(
+                "Ask a clarifying question when a step is uncertain, and require a "
+                "jury before an irreversible action. Overrides escalation.enabled."
+            ),
+        ),
+    ] = None,
+    harness: Annotated[
+        str | None,
+        typer.Option(
+            help="Small-model scaffold: auto, off, tiny, standard, or frontier. "
+            "auto probes a real model once and caches the profile."
+        ),
+    ] = None,
+    record: Annotated[
+        bool,
+        typer.Option("--record", help="Write a portable run bundle under the output directory."),
+    ] = False,
+    bundle: Annotated[
+        Path | None,
+        typer.Option("--bundle", help="Directory for the run bundle. Implies --record."),
+    ] = None,
 ) -> None:
     """Plan, do, and verify a multi-step task."""
+    from swag_bot.onboarding.setup import first_run_if_needed
+
+    first_run_if_needed(announce=typer.echo)
     if not goal.strip():
         typer.echo("goal must not be empty", err=True)
         raise typer.Exit(code=1)
@@ -97,24 +189,8 @@ def run(
         typer.echo("max-steps, max-attempts, and concurrency must be at least 1", err=True)
         raise typer.Exit(code=1)
 
-    shown: dict[str, str] = {}
     view = TaskListView()
-
-    def on_event(event: LoopEvent) -> None:
-        if event.kind in {"plan", "status"}:
-            view.update(event.plan)
-            for step in event.plan.steps:
-                if event.kind == "status" and event.step_id not in {None, step.id}:
-                    continue
-                label = display_status(step.status)
-                if shown.get(step.id) == label:
-                    continue
-                shown[step.id] = label
-                typer.echo(f"[{label}] {step.id} {step.title}")
-        elif event.text:
-            prefix = f"[{event.step_id}] " if event.step_id else ""
-            view.stream(f"{prefix}{event.text}")
-            typer.echo(f"{prefix}{event.text}")
+    progress = RunProgress(view)
 
     typer.echo(f"Planning: {goal}")
     try:
@@ -129,15 +205,28 @@ def run(
                 concurrency=concurrency,
                 max_attempts=max_attempts,
                 engine=engine,
-                on_event=on_event,
-                announce=typer.echo,
+                harness=harness,
+                on_event=progress,
+                announce=view.note,
+                strict_plan=strict_plan,
+                memory_mode=memory_mode,
+                display=view,
+                evidence=evidence,
+                taint_mode=taint_mode,
+                escalate=escalate,
+                record=record,
+                bundle_dir=bundle,
             )
     except (ValueError, SwagError) as exc:
+        view.print_final()
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+    view.print_final()
 
     typer.echo(result.summary.rstrip())
     typer.echo(f"Output: {result.output_dir}")
+    if result.bundle_dir is not None:
+        typer.echo(f"Bundle: {result.bundle_dir}")
     if result.exit_code:
         raise typer.Exit(code=result.exit_code)
 
@@ -153,21 +242,52 @@ def execute_goal(
     concurrency: int = 4,
     max_attempts: int = 2,
     engine: str = "python",
+    harness: str | None = None,
     on_event: Callable[[LoopEvent], None] | None = None,
     announce: Callable[[str], None] | None = None,
     settings: Settings | None = None,
+    strict_plan: bool = False,
+    memory_mode: str | None = None,
+    display: TaskListView | None = None,
+    evidence: bool | None = None,
+    taint_mode: str | None = None,
+    escalate: bool | None = None,
+    prompter: ApprovalPrompter | None = None,
+    record: bool = False,
+    bundle_dir: Path | None = None,
+    client: LLMClient | None = None,
+    prepare_tools: Callable[[InMemoryToolRegistry], None] | None = None,
+    policy_wrapper: Callable[[PermissionPolicy], PermissionPolicy] | None = None,
+    context_prefix: str = "",
 ) -> GoalResult:
     """Run one goal with the configured model, sandbox, policy, tools, and memory.
 
     Recalls memories and selects plugin skills before planning. Saves the
-    summary to memory after the run. MCP tools come from ``~/.swag/mcp.json``
+    summary to memory after the run. MCP tools come from ``$SWAG_HOME/mcp.json``
     and from enabled plugins, on top of the built-in file and shell tools.
+
+    ``record`` or ``bundle.record`` in config writes a run bundle. ``client``
+    replaces the configured model; tests and replay use that.
+
+    ``prompter``, ``prepare_tools``, ``policy_wrapper``, and ``context_prefix``
+    are optional hooks for another front end. The Chrome extension uses them
+    for side-panel approvals, tab tools, and untrusted page text. Omitting
+    them keeps the terminal behavior.
     """
     if not goal.strip():
         raise SwagError("goal must not be empty")
     if max_steps < 1 or max_attempts < 1 or concurrency < 1:
         raise SwagError("max-steps, max-attempts, and concurrency must be at least 1")
+    chosen_memory: str | None = None
+    if memory_mode is not None:
+        try:
+            chosen_memory = normalize_memory_mode(memory_mode)
+        except ValueError as exc:
+            raise SwagError(str(exc)) from exc
 
+    from swag_bot.onboarding.secrets import apply_saved_keys
+
+    apply_saved_keys()
     active = load_settings() if settings is None else settings
     if autonomy is not None:
         active = active.model_copy(update={"autonomy": autonomy})
@@ -175,34 +295,128 @@ def execute_goal(
         active = active.model_copy(
             update={"model": active.model.model_copy(update={"model": model})}
         )
+    if chosen_memory is not None:
+        active = active.model_copy(
+            update={"memory": active.memory.model_copy(update={"mode": chosen_memory})}
+        )
+    if taint_mode is not None:
+        try:
+            chosen_taint = TaintMode(taint_mode)
+        except ValueError as exc:
+            raise SwagError("taint mode must be escalate, block, or off") from exc
+        active = active.model_copy(
+            update={"taint": active.taint.model_copy(update={"mode": chosen_taint})}
+        )
+    if harness:
+        active = active.model_copy(
+            update={"model": active.model.model_copy(update={"harness": harness})}
+        )
 
-    llm = build_llm_client(active)
+    llm = client if client is not None else build_llm_client(active)
+    prepared = prepare_harness(active, llm)
+    if prepared.note and announce is not None:
+        announce(prepared.note)
+    session_llm: LLMClient = prepared.llm
     destination = output_dir if output_dir is not None else default_output_dir()
     destination.mkdir(parents=True, exist_ok=True)
     sandbox = _sandbox(active, destination)
     memory = _memory(active)
-    policy = _policy(active, destination)
-    prompter = _prompter(active)
+    active_policy = _policy(active, destination)
+    if policy_wrapper is not None:
+        active_policy = policy_wrapper(active_policy)
+    active_prompter = prompter if prompter is not None else _prompter(active)
+    if display is not None:
+        active_prompter = PromptSuspender(active_prompter, display)
     plugins = _plugins(active)
+    if active.memory.mode == "off" and announce is not None:
+        announce("memory off: this run will not read or write memory")
+    sandbox, undo = _attach_undo(active, destination, sandbox, active_policy, plugins)
 
-    tools = InMemoryToolRegistry()
-    register_builtin_tools(tools, sandbox)
-    mcp_client = _attach_mcp_tools(tools, active, policy, prompter, plugins)
-    context = _planner_context(goal, memory, plugins)
+    want_record = bundle_dir is not None or record or active.bundle.record
+    recorder: RunRecorder | None = None
+    if want_record:
+        recorder = RunRecorder(
+            provider=active.model.provider,
+            model=active.model.model,
+            api_base=active.model.api_base,
+            autonomy=active.autonomy.value,
+            sandbox_mode=active.sandbox.mode.value,
+            memory_backend=active.memory.backend,
+            max_steps=max_steps,
+            max_attempts=max_attempts,
+            concurrency=concurrency,
+            engine=engine,
+            dry_run=dry_run,
+        )
+        session_llm = recorder.wrap_llm(session_llm)
+        memory = recorder.wrap_memory(memory)
+        active_prompter = recorder.wrap_prompter(active_prompter)
+
+    tracker = build_taint_tracker(active, llm=session_llm)
+    if tracker is not None:
+        tracker.note(goal, source="user", trust=TrustLevel.TRUSTED)
+    registry = InMemoryToolRegistry()
+    register_builtin_tools(registry, sandbox)
+    mcp_client = _attach_mcp_tools(
+        registry, active, active_policy, active_prompter, plugins, tracker
+    )
+    if undo is not None:
+        _note_mcp_compensations(undo, registry)
+    if prepare_tools is not None:
+        prepare_tools(registry)
+    tools: ToolRegistry = registry
+    if recorder is not None:
+        tools = recorder.wrap_tools(tools)
+        recorder.note_files_before(sandbox.workdir)
+    context = _planner_context(
+        goal,
+        memory,
+        plugins,
+        tracker,
+        active.taint.memory,
+        announce=announce,
+        mode=active.memory.mode,
+    )
+    prefix = context_prefix.strip()
+    if prefix:
+        context = f"{prefix}\n\n{context}" if context else prefix
+    if recorder is not None:
+        recorder.planner_context = context
+        recorder.tool_names = [tool.name for tool in tools.list_tools()]
+        recorder.seal_planner_searches()
+    escalation = _escalation(
+        active, session_llm, destination, escalate=escalate, announce=announce
+    )
 
     try:
+        evidence_enabled = active.evidence.enabled if evidence is None else evidence
+        home_log = ActionLog()
+
+        def persist(entry: ActionLogEntry) -> None:
+            home_log.append(entry)
+
         loop = PlanDoVerifyLoop(
-            llm=llm,
+            llm=session_llm,
             sandbox=sandbox,
             memory=memory,
-            policy=policy,
-            prompter=prompter,
+            policy=active_policy,
+            prompter=active_prompter,
             tools=tools,
             model=active.model.model,
             max_steps=max_steps,
             max_attempts=max_attempts,
             concurrency=concurrency,
             engine=engine,
+            strict_plan=strict_plan,
+            memory_mode=active.memory.mode,
+            action_sink=persist,
+            evidence_dir=destination,
+            evidence_enabled=evidence_enabled,
+            undo=undo,
+            taint=tracker,
+            escalation=escalation,
+            scaffold=prepared.scaffold,
+            model_escalation=prepared.escalation,
         )
     except (ValueError, SwagError):
         if mcp_client is not None:
@@ -210,33 +424,118 @@ def execute_goal(
         raise
     if loop.engine_note and announce is not None:
         announce(loop.engine_note)
-    loop.on_event = on_event
+
+    def emit(event: LoopEvent) -> None:
+        if recorder is not None:
+            recorder.observe(event.kind, event.plan, event.step_id, event.status, event.text)
+        if on_event is not None:
+            on_event(event)
+
+    loop.on_event = emit
 
     plan = None
+    written: Path | None = None
+    bundle_summary = ""
     try:
         plan = loop.run(goal, dry_run=dry_run, context=context)
-        _save_summary(memory, goal, loop.summary_text)
-        failed = any(step.status == StepStatus.FAILED for step in plan.steps)
+        bundle_summary = loop.summary_text
+        saved = _save_summary(
+            memory,
+            goal,
+            loop.summary_text,
+            mode=active.memory.mode,
+            prompter=active_prompter,
+            run_id=plan.id,
+            announce=announce,
+        )
+        if saved:
+            loop.summary_text = append_remembered(loop.summary_text, saved)
+        failed = any(
+            step.status in {StepStatus.FAILED, StepStatus.UNVERIFIED} for step in plan.steps
+        )
+        if recorder is not None:
+            written = recorder.finish(
+                bundle_dir if bundle_dir is not None else destination / "bundle",
+                plan=plan,
+                results=dict(loop.results),
+                action_log=list(loop.action_log),
+                summary=bundle_summary,
+                exit_code=1 if failed else 0,
+                output_dir=destination,
+                workdir=sandbox.workdir,
+                strict_plan=_flag(loop, "strict_plan"),
+                memory_mode=_text_flag(loop, "memory_mode"),
+            )
         return GoalResult(
             summary=loop.summary_text,
             output_dir=destination,
             exit_code=1 if failed else 0,
             engine_note=loop.engine_note,
+            bundle_dir=written,
         )
     finally:
         if plan is not None:
-            write_run_artifacts(destination, plan, loop.action_log, loop.summary_text)
+            write_run_artifacts(
+                destination, plan, loop.action_log, loop.summary_text, ledger=loop.ledger
+            )
+        if recorder is not None and not recorder.sealed and plan is not None:
+            try:
+                recorder.finish(
+                    bundle_dir if bundle_dir is not None else destination / "bundle",
+                    plan=plan,
+                    results=dict(loop.results),
+                    action_log=list(loop.action_log),
+                    summary=bundle_summary,
+                    exit_code=1,
+                    output_dir=destination,
+                    workdir=sandbox.workdir,
+                    strict_plan=_flag(loop, "strict_plan"),
+                    memory_mode=_text_flag(loop, "memory_mode"),
+                )
+            except Exception:
+                pass
+        if recorder is not None and recorder.sealed:
+            try:
+                recorder.attach_external_evidence(destination)
+            except Exception:
+                pass
+            if recorder.destination is not None and plan is not None:
+                _index_bundle(plan.id, recorder.destination)
         if mcp_client is not None:
             mcp_client.close()
+
+
+def _index_bundle(run_id: str, bundle: Path) -> None:
+    """Publish ``$SWAG_HOME/bundles/<run_id>.json`` for later replay."""
+    try:
+        from swag_bot.config import swag_home
+        from swag_bot.learning.runtime import register_bundle
+
+        register_bundle(swag_home(), run_id, bundle)
+    except Exception as exc:
+        print(f"warning: bundle index was not written: {exc}", file=sys.stderr)
+
+
+def _flag(loop: object, name: str) -> bool | None:
+    value = getattr(loop, name, None)
+    return value if isinstance(value, bool) else None
+
+
+def _text_flag(loop: object, name: str) -> str | None:
+    value = getattr(loop, name, None)
+    return value if isinstance(value, str) and value else None
 
 
 def mcp_task_runner(goal: str) -> str:
     """Run a goal for ``swag serve-mcp`` and return the summary text.
 
-    Stdout stays quiet so it does not corrupt a stdio MCP session.
+    The prompter is the one bound for this MCP request. It never reads stdin
+    or writes stdout, because those streams are the stdio protocol channel.
     """
+    from swag_bot.onboarding.approvals import current_mcp_prompter
+
     try:
-        return execute_goal(goal).summary
+        return execute_goal(goal, prompter=current_mcp_prompter()).summary
     except SwagError as exc:
         return str(exc)
 
@@ -247,6 +546,52 @@ def mcp_skill_provider() -> list[SkillMeta]:
         return list(build_registry(load_settings()).list_skills())
     except SwagError:
         return []
+
+
+def _attach_undo(
+    settings: Settings,
+    workdir: Path,
+    sandbox: Sandbox,
+    policy: PermissionPolicy,
+    plugins: PluginRegistry | None,
+) -> tuple[Sandbox, UndoLedger | None]:
+    """Wrap ``sandbox`` so writes and shell commands snapshot first.
+
+    Disabled with ``undo.enabled = false``. The default autonomy stays
+    ``ask-risky``; this only records restore points.
+    """
+    if not settings.undo.enabled:
+        return sandbox, None
+    registry = CompensationRegistry()
+    if plugins is not None:
+        try:
+            for plugin in plugins.list_plugins():
+                registry.load_entries(
+                    list(plugin.manifest.compensations),
+                    source=plugin.manifest.name,
+                )
+        except Exception as exc:
+            print(f"warning: compensations were not loaded: {exc}", file=sys.stderr)
+    bind = getattr(policy, "bind_compensations", None)
+    if callable(bind):
+        bind(registry)
+    ledger = UndoLedger.open(
+        workdir,
+        compensations=registry,
+        auto_rollback=settings.undo.auto_rollback,
+    )
+    return UndoSandbox(sandbox, ledger), ledger
+
+
+def _note_mcp_compensations(ledger: UndoLedger, tools: InMemoryToolRegistry) -> None:
+    for tool in tools.list_tools():
+        raw = compensation_annotation(tool)
+        if raw is None:
+            continue
+        entry = dict(raw)
+        if "tool" not in entry and "name" not in entry:
+            entry["tool"] = tool.name
+        ledger.compensations.load_entries([entry], source=tool.name)
 
 
 def _sandbox(settings: Settings, workdir: Path) -> Sandbox:
@@ -277,6 +622,94 @@ def _prompter(settings: Settings) -> ApprovalPrompter:
         return FallbackPrompter()
 
 
+def _escalation(
+    settings: Settings,
+    llm: LLMClient,
+    workdir: Path,
+    *,
+    escalate: bool | None,
+    announce: Callable[[str], None] | None,
+) -> EscalationController | None:
+    """Build the uncertainty gate when this run asked for it.
+
+    ``escalate`` True or False overrides ``escalation.enabled``. None keeps
+    the config value, which defaults to off.
+    """
+    chosen = _escalation_settings(settings.escalation, escalate)
+    if not chosen.enabled:
+        return None
+    label = f"{settings.model.provider}/{settings.model.model}"
+    return build_escalation(
+        chosen,
+        llm=llm,
+        judges=_judges(settings, llm, announce),
+        classifier=_reversibility_classifier(workdir),
+        session_label=label,
+    )
+
+
+def _reversibility_classifier(workdir: Path) -> ReversibilityClassifier:
+    """Use the undo ledger's classifier when it has landed, else the stub."""
+    try:
+        module = importlib.import_module("swag_bot.safety.reversibility")
+    except ImportError:
+        return StubReversibilityClassifier()
+    return adapt_classifier(getattr(module, "classify_reversibility", None), workdir)
+
+
+def _escalation_settings(settings: EscalationSettings, escalate: bool | None) -> EscalationSettings:
+    if escalate is None:
+        return settings
+    return settings.model_copy(update={"enabled": escalate})
+
+
+def _judges(
+    settings: Settings,
+    llm: LLMClient,
+    announce: Callable[[str], None] | None,
+) -> list[tuple[str, LLMClient]]:
+    """Judge clients from ``escalation.judges``. Empty means the session model.
+
+    A judge that cannot be built is skipped. If every judge fails, the session
+    model is used so a single local model still runs the panel.
+    """
+    specs = settings.escalation.judges
+    if not specs:
+        return []
+    built: list[tuple[str, LLMClient]] = []
+    for spec in specs:
+        try:
+            provider, model = split_provider_model(spec)
+        except ConfigError as exc:
+            _warn(announce, f"skipping jury judge {spec!r}: {exc}")
+            continue
+        try:
+            client = build_llm_client(
+                settings.model_copy(
+                    update={
+                        "model": settings.model.model_copy(
+                            update={"provider": provider, "model": model, "api_base": None}
+                        )
+                    }
+                )
+            )
+        except Exception as exc:
+            _warn(announce, f"skipping jury judge {spec!r}: {exc}")
+            continue
+        built.append((f"{provider}/{model}", client))
+    if not built:
+        _warn(announce, "no jury judges could be built; using the session model")
+    return built
+
+
+def _warn(announce: Callable[[str], None] | None, message: str) -> None:
+    text = f"warning: {message}"
+    if announce is not None:
+        announce(text)
+    else:
+        print(text, file=sys.stderr)
+
+
 def _plugins(settings: Settings) -> PluginRegistry | None:
     try:
         return build_registry(settings)
@@ -285,53 +718,88 @@ def _plugins(settings: Settings) -> PluginRegistry | None:
         return None
 
 
-def _planner_context(goal: str, memory: MemoryStore, plugins: PluginRegistry | None) -> str:
+def _planner_context(
+    goal: str,
+    memory: MemoryStore,
+    plugins: PluginRegistry | None,
+    tracker: TaintTracker | None = None,
+    memory_trust: TrustLevel = TrustLevel.TRUSTED,
+    *,
+    announce: Callable[[str], None] | None = None,
+    mode: str = "auto",
+) -> str:
     sections: list[str] = []
-    recalled = _recall(memory, goal)
-    if recalled:
-        lines = ["Relevant memories:", *[f"- {item}" for item in recalled]]
-        sections.append("\n".join(lines))
-    skills = _skill_instructions(goal, plugins)
+    if mode != "off":
+        items = _recall_items(memory, goal)
+        recalled = recall_lines(items)
+        if recalled and announce is not None:
+            for line in recalled:
+                announce(line)
+        if recalled:
+            sections.append("Relevant memories:\n" + "\n".join(f"- {item}" for item in recalled))
+        if tracker is not None:
+            for item in items:
+                tracker.note(item.content, source="memory", trust=memory_trust)
+    skills = _skill_blocks(goal, plugins)
     if skills:
-        sections.append(skills)
+        sections.append("Selected skills:\n\n" + "\n\n".join(body for _name, body in skills))
+        if tracker is not None:
+            for name, body in skills:
+                tracker.note(body, source=f"plugin:{name}", trust=TrustLevel.UNTRUSTED)
     return "\n\n".join(sections)
 
 
-def _recall(memory: MemoryStore, goal: str) -> list[str]:
+def _recall_items(memory: MemoryStore, goal: str) -> list[MemoryItem]:
     try:
-        return [item.content for item in memory.search(goal, limit=5)]
+        return list(memory.search(goal, limit=5))
     except Exception:
         return []
 
 
-def _skill_instructions(goal: str, plugins: PluginRegistry | None) -> str:
+def _skill_blocks(goal: str, plugins: PluginRegistry | None) -> list[tuple[str, str]]:
     if plugins is None:
-        return ""
+        return []
     try:
         chosen = plugins.select_skills(goal, limit=5)
     except Exception:
-        return ""
-    blocks: list[str] = []
+        return []
+    blocks: list[tuple[str, str]] = []
     for meta in chosen:
         try:
             body = plugins.load_skill(meta.name).instructions().strip()
         except (KeyError, OSError, SwagError):
             continue
         if body:
-            blocks.append(f"### {meta.name}\n{body}")
-    if not blocks:
-        return ""
-    return "Selected skills:\n\n" + "\n\n".join(blocks)
+            blocks.append((meta.name, f"### {meta.name}\n{body}"))
+    return blocks
 
 
-def _save_summary(memory: MemoryStore, goal: str, summary: str) -> None:
+def _save_summary(
+    memory: MemoryStore,
+    goal: str,
+    summary: str,
+    *,
+    mode: str,
+    prompter: ApprovalPrompter,
+    run_id: str,
+    announce: Callable[[str], None] | None,
+) -> str:
+    """Save the run summary. Return the ``remembered:`` line when it was stored."""
     text = summary.strip()
-    if not text:
-        return
-    try:
-        memory.add(text, metadata={"kind": "run-summary", "goal": goal})
-    except Exception:
-        return
+    notice = commit_memory(
+        memory,
+        text,
+        mode=mode,
+        prompter=prompter,
+        metadata=provenance_metadata(run_id=run_id, kind="run-summary", goal=goal),
+    )
+    if notice is None:
+        return ""
+    if notice.saved:
+        return notice.text
+    if announce is not None:
+        announce(notice.text)
+    return ""
 
 
 def _attach_mcp_tools(
@@ -340,13 +808,20 @@ def _attach_mcp_tools(
     policy: PermissionPolicy,
     prompter: ApprovalPrompter,
     plugins: PluginRegistry | None,
+    tracker: TaintTracker | None = None,
 ) -> SwagMCPClient | None:
     servers = _mcp_servers(settings, plugins)
     if not servers:
         return None
     client: SwagMCPClient | None = None
     try:
-        client = build_mcp_client(settings, policy=policy, prompter=prompter, servers=servers)
+        client = build_mcp_client(
+            settings,
+            policy=policy,
+            prompter=prompter,
+            servers=servers,
+            taint=tracker,
+        )
         listed = client.list_tools()
     except Exception as exc:
         print(f"warning: MCP tools were not loaded: {exc}", file=sys.stderr)
@@ -359,7 +834,7 @@ def _attach_mcp_tools(
 
 
 def _mcp_servers(settings: Settings, plugins: PluginRegistry | None) -> list[MCPServerSpec]:
-    """Plugin servers first. An entry in ``~/.swag/mcp.json`` with the same name wins."""
+    """Plugin servers first. An entry in ``$SWAG_HOME/mcp.json`` with the same name wins."""
     merged: dict[str, MCPServerSpec] = {}
     if plugins is not None:
         try:

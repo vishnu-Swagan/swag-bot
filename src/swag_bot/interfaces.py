@@ -36,6 +36,12 @@ from swag_bot.errors import SandboxError
 # command exceeds ``timeout`` so callers do not have to catch a special error.
 TIMEOUT_EXIT_CODE = 124
 
+# Evidence Contract. The prose spec is ``docs/spec/evidence-contract.md``.
+# Skill learning, replay, and jury features should read that file and these
+# models rather than inventing a second ledger shape.
+EVIDENCE_CONTRACT_SPEC = "swag-evidence-contract"
+EVIDENCE_CONTRACT_VERSION = "1.0"
+
 _SKILL_NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
@@ -116,11 +122,23 @@ class Message(BaseModel):
 
 
 class Tool(BaseModel):
-    """A tool the model may call. ``parameters`` is a JSON Schema object."""
+    """A tool the model may call. ``parameters`` is a JSON Schema object.
+
+    ``annotations`` is an open bag for tool metadata. Swag Bot reads
+    ``swagCompensation`` from it when an MCP tool declares an inverse.
+    ``risk_hint``, ``permission_hint``, and ``plugin`` are optional metadata
+    for the permission policy. They are not sent to the model. The executor
+    copies them onto the action and ignores any copy the model puts in the
+    tool arguments. Hints never lower a ``destructive`` classification.
+    """
 
     name: str
     description: str = ""
     parameters: dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
+    annotations: dict[str, Any] = Field(default_factory=dict)
+    risk_hint: str | None = None
+    permission_hint: str | None = None
+    plugin: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -431,6 +449,7 @@ class PluginManifest(BaseModel):
     experimental: ExperimentalComponents | None = None
     dependencies: list[PluginDependency] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
+    compensations: list[dict[str, Any]] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod
@@ -467,6 +486,15 @@ class PluginManifest(BaseModel):
         for item in value:
             if not isinstance(item, str) or not item or any(ch.isspace() for ch in item):
                 raise ValueError("permission names must be non-empty and contain no whitespace")
+        return value
+
+    @field_validator("compensations", mode="before")
+    @classmethod
+    def _compensations(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+            raise ValueError("compensations must be a list of objects")
         return value
 
     @classmethod
@@ -515,13 +543,20 @@ class AutonomyLevel(StrEnum):
     """How often the agent asks before acting.
 
     - ``ask-always``: prompt for every action, including reads.
-    - ``ask-risky``: prompt for anything that is not a pure read.
+    - ``ask-risky``: prompt for anything that is not a pure read. This is
+      the default.
+    - ``ask-irreversible``: prompt only at the point of no return
+      (``Reversibility.IRREVERSIBLE``). Reversible workspace edits, including
+      shell changes inside the snapshotted workdir, and compensable actions
+      proceed without a prompt. This is a separate mode. It does not weaken
+      ``ask-risky``.
     - ``auto``: do not prompt. Still log every action. A policy may still
       hard-deny; skipping the prompt is not the same as allowing everything.
     """
 
     ASK_ALWAYS = "ask-always"
     ASK_RISKY = "ask-risky"
+    ASK_IRREVERSIBLE = "ask-irreversible"
     AUTO = "auto"
 
 
@@ -540,6 +575,25 @@ class RiskLevel(StrEnum):
     EXECUTE = "execute"
     NETWORK = "network"
     DESTRUCTIVE = "destructive"
+
+
+class Reversibility(StrEnum):
+    """Whether an action can be rolled back after it runs.
+
+    Risk and reversibility are different. A shell ``rm`` inside the sandbox
+    workdir is destructive and still reversible, because a snapshot was taken
+    first. Sending email is irreversible even when the risk is only ``network``.
+
+    - ``reversible``: workspace files, including changes a shell command makes
+      inside the snapshotted workdir.
+    - ``compensable``: an external side effect with a registered inverse, such
+      as closing an issue the tool just created.
+    - ``irreversible``: a point of no return. Undo cannot restore it.
+    """
+
+    REVERSIBLE = "reversible"
+    COMPENSABLE = "compensable"
+    IRREVERSIBLE = "irreversible"
 
 
 class ActionKind(StrEnum):
@@ -565,20 +619,93 @@ class ActionRequest(BaseModel):
     risk: RiskLevel
     target: str | None = None
     arguments: dict[str, Any] = Field(default_factory=dict)
+    reversibility: Reversibility | None = None
+    tool_name: str | None = None
 
 
-def default_requires_approval(autonomy: AutonomyLevel, risk: RiskLevel) -> bool:
+# Key on ``ActionRequest.arguments`` written by a ``TaintTracker``. Tool
+# arguments that use the same name are stripped before the policy reads it.
+SWAG_TAINT_KEY = "_swag_taint"
+
+
+class TrustLevel(StrEnum):
+    """Whether a span of data may choose a sensitive action by itself.
+
+    ``trusted`` is the user goal and other data the user marked trusted.
+    ``untrusted`` is data the agent read from outside that trust boundary
+    (web pages, MCP results, plugin output, files outside the workspace).
+    """
+
+    TRUSTED = "trusted"
+    UNTRUSTED = "untrusted"
+
+
+@runtime_checkable
+class TaintTracker(Protocol):
+    """Labels data by source and trust, and quarantines untrusted tool output.
+
+    This is span- and argument-level tracking, not a proof of information
+    flow. ``prepare`` may raise ``action.risk`` and attach a ``_swag_taint``
+    stamp. It must not lower a ``destructive`` risk. ``label_output`` returns
+    the text the model is allowed to see. ``observe_result`` records a result
+    the caller will return raw (the executor quarantines it later).
+    """
+
+    def note(self, text: str, *, source: str, trust: TrustLevel) -> None:
+        """Record text that entered the agent, such as the user goal."""
+        ...
+
+    def register_tool(self, name: str, meta: Mapping[str, Any]) -> None:
+        """Record MCP ``_meta.swag`` (risk, sinks, source).
+
+        Metadata may raise risk or name a source. It must not be able to mark
+        MCP or web output as trusted.
+        """
+        ...
+
+    def prepare(self, action: ActionRequest, *, tool: str) -> ActionRequest:
+        """Stamp ``action`` before the permission policy sees it."""
+        ...
+
+    def label_output(self, tool: str, arguments: Mapping[str, Any], output: str) -> str:
+        """Record tool output and return the model-facing text."""
+        ...
+
+    def observe_result(
+        self,
+        tool: str,
+        output: str,
+        meta: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Record a tool result without changing the text returned to the caller."""
+        ...
+
+
+def default_requires_approval(
+    autonomy: AutonomyLevel,
+    risk: RiskLevel,
+    *,
+    reversibility: Reversibility | None = None,
+) -> bool:
     """Whether ``autonomy`` should prompt before an action of ``risk``.
 
     ``ask-always`` prompts every time. ``ask-risky`` prompts unless the risk
-    is ``read``. ``auto`` never prompts. A ``PermissionPolicy`` may deny more
-    often than this (including a hard deny with no prompt). It must not prompt
-    less often than this for the configured autonomy level.
+    is ``read``. ``auto`` never prompts. ``ask-irreversible`` prompts only
+    when ``reversibility`` is ``irreversible``. When that argument is omitted,
+    the floor for ``ask-irreversible`` is no prompt: the policy that classified
+    the action asks at the point of no return, and it may still prompt more
+    often than this helper.
+
+    A ``PermissionPolicy`` may deny more often than this (including a hard
+    deny with no prompt). It must not prompt less often than this for the
+    configured autonomy level.
     """
     if autonomy is AutonomyLevel.ASK_ALWAYS:
         return True
     if autonomy is AutonomyLevel.AUTO:
         return False
+    if autonomy is AutonomyLevel.ASK_IRREVERSIBLE:
+        return reversibility is Reversibility.IRREVERSIBLE
     return risk is not RiskLevel.READ
 
 
@@ -703,6 +830,57 @@ class Sandbox(Protocol):
         ...
 
 
+class UndoResult(BaseModel):
+    """What an undo restored, and what it could not.
+
+    ``restored_to`` is ``run-start`` or a step id. ``irreversible`` lists
+    actions whose effects are still out in the world. ``compensations_skipped``
+    lists inverses that were declared but did not run.
+    """
+
+    run_id: str
+    workdir: str
+    restored_to: str
+    files_changed: int = 0
+    compensations_ran: list[str] = Field(default_factory=list)
+    compensations_skipped: list[str] = Field(default_factory=list)
+    irreversible: list[str] = Field(default_factory=list)
+
+
+@runtime_checkable
+class UndoController(Protocol):
+    """Workspace snapshots and compensating actions for one run.
+
+    The core loop calls this around steps. The implementation lives in
+    ``swag_bot.safety`` so the loop does not import that package.
+    """
+
+    @property
+    def auto_rollback(self) -> bool:
+        """When true, a failed step restores the snapshot from its start."""
+        ...
+
+    def begin_run(self, run_id: str, workdir: Path) -> None:
+        """Snapshot ``workdir`` before any step mutates it."""
+        ...
+
+    def begin_step(self, step_id: str) -> None:
+        """Remember the workspace at the start of ``step_id``."""
+        ...
+
+    def note_action(self, action: ActionRequest, *, outcome: str | None = None) -> None:
+        """Record an action so undo can compensate it or report that it cannot."""
+        ...
+
+    def rollback_step(self, step_id: str) -> UndoResult:
+        """Restore the snapshot from the start of ``step_id`` and compensate."""
+        ...
+
+    def rollback_run(self, *, to_step: str | None = None) -> UndoResult:
+        """Restore the run start, or the start of ``to_step`` when given."""
+        ...
+
+
 class ActionLogEntry(BaseModel):
     """One recorded action. The safety agent appends these; it does not delete them."""
 
@@ -713,6 +891,11 @@ class ActionLogEntry(BaseModel):
     approved: bool
     approver: str
     outcome: str | None = None
+    # Set when this action produced an ``Evidence`` record in the same run.
+    evidence_id: str | None = None
+    # Plan id of the run that recorded the action. Empty for entries written
+    # outside a run. ``swag safety log`` reads the home index of these rows.
+    run_id: str | None = None
 
     @field_validator("approver")
     @classmethod
@@ -768,12 +951,131 @@ class MemoryStore(Protocol):
 # ---------------------------------------------------------------------------
 
 
+class Check(BaseModel):
+    """One machine-checkable acceptance check for a plan step.
+
+    ``kind`` is an open string so a newer writer does not make an older reader
+    reject the plan. The reference runner in ``core/checks.py`` implements
+    ``file_exists``, ``file_contains``, ``file_absent``, ``command``,
+    ``exit_code``, and ``json_schema`` (see the Evidence Contract). An unknown
+    kind fails that check at run time.
+
+    ``schema`` in JSON is accepted as an alias of ``json_schema``.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    id: str = ""
+    kind: str
+    description: str = ""
+    path: str | None = None
+    command: str | None = None
+    contains: str | None = None
+    expected_exit: int | None = None
+    json_schema: dict[str, Any] | None = None
+    timeout: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _schema_alias(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "schema" in value and "json_schema" not in value:
+            data = dict(value)
+            data["json_schema"] = data.pop("schema")
+            return data
+        return value
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("check kind must not be empty")
+        return text
+
+    @field_validator("expected_exit", mode="before")
+    @classmethod
+    def _expected_exit(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            text = value.strip()
+            if text.lstrip("-").isdigit():
+                return int(text)
+        return value
+
+
+class CheckResult(BaseModel):
+    """Outcome of one acceptance check. ``evidence_ids`` cite the ledger."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    check_id: str
+    passed: bool
+    evidence_ids: list[str] = Field(default_factory=list)
+    detail: str = ""
+
+
+class Evidence(BaseModel):
+    """One fact in a run's evidence ledger.
+
+    Stdout, stderr, and file bodies are stored as blob files. The ``*_sha256``
+    fields are the hex SHA-256 of those stored bytes. ``preview`` is a short
+    redacted excerpt. ``stdout``, ``stderr``, and ``content`` are in-memory
+    only and are omitted from ``run.jsonl``.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=lambda: f"ev-{uuid4().hex[:12]}")
+    kind: str
+    step_id: str | None = None
+    attempt: int | None = None
+    tool: str | None = None
+    summary: str = ""
+    exit_code: int | None = None
+    stdout_sha256: str | None = None
+    stderr_sha256: str | None = None
+    content_sha256: str | None = None
+    stdout_blob: str | None = None
+    stderr_blob: str | None = None
+    content_blob: str | None = None
+    path: str | None = None
+    ok: bool | None = None
+    detail: str = ""
+    preview: str = ""
+    duration_ms: int | None = None
+    truncated: bool = False
+    created_at: datetime = Field(default_factory=_utcnow)
+    stdout: str = Field(default="", exclude=True)
+    stderr: str = Field(default="", exclude=True)
+    content: str = Field(default="", exclude=True)
+
+
+class RunRecord(BaseModel):
+    """One JSON line of a per-run ``run.jsonl`` file.
+
+    ``record`` is ``header``, ``evidence``, ``action``, or ``check``.
+    Only the payload that matches ``record`` is set.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    record: str
+    version: str | None = None
+    spec: str | None = None
+    run_id: str | None = None
+    goal: str | None = None
+    evidence: Evidence | None = None
+    action: ActionLogEntry | None = None
+    check: CheckResult | None = None
+
+
 class StepStatus(StrEnum):
     """Where a plan step is in the plan-do-verify loop.
 
-    ``done`` means the step ran and its check passed. ``failed`` means the
-    work or the check failed. ``skipped`` means a dependency failed or the
-    planner dropped the step.
+    ``done`` means the step ran and a check passed with cited evidence.
+    ``failed`` means the work or an acceptance check failed. ``unverified``
+    means a pass was claimed without evidence the harness could cite.
+    ``skipped`` means a dependency did not succeed or the planner dropped
+    the step.
     """
 
     PENDING = "pending"
@@ -781,6 +1083,7 @@ class StepStatus(StrEnum):
     VERIFYING = "verifying"
     DONE = "done"
     FAILED = "failed"
+    UNVERIFIED = "unverified"
     SKIPPED = "skipped"
 
 
@@ -792,6 +1095,7 @@ class Step(BaseModel):
     instruction: str = ""
     status: StepStatus = StepStatus.PENDING
     depends_on: list[str] = Field(default_factory=list)
+    checks: list[Check] = Field(default_factory=list)
 
     @field_validator("id", "title")
     @classmethod
@@ -809,6 +1113,8 @@ class StepResult(BaseModel):
     observation: str = ""
     error: str | None = None
     verified: bool = False
+    evidence_ids: list[str] = Field(default_factory=list)
+    check_results: list[CheckResult] = Field(default_factory=list)
 
 
 class TaskPlan(BaseModel):
@@ -859,7 +1165,8 @@ class MCPServerSpec(BaseModel):
     ``transport`` is ``stdio`` when ``command`` is set, or ``http`` / ``sse``
     / ``ws`` when ``url`` is set. ``headers`` is for streamable HTTP (values
     may still contain ``${VAR}`` placeholders; the client substitutes them).
-    The mcp agent owns the real client.
+    ``plugin`` is the plugin that declared the server, when the loader knows
+    it. The mcp agent owns the real client.
     """
 
     name: str
@@ -869,6 +1176,7 @@ class MCPServerSpec(BaseModel):
     url: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     transport: str = "stdio"
+    plugin: str | None = None
 
 
 @runtime_checkable
@@ -952,7 +1260,12 @@ __all__ = [
     "AutonomyLevel",
     "ChatChunk",
     "ChatResponse",
+    "EVIDENCE_CONTRACT_SPEC",
+    "EVIDENCE_CONTRACT_VERSION",
+    "Check",
+    "CheckResult",
     "CommandResult",
+    "Evidence",
     "ExperimentalComponents",
     "GrantStore",
     "LLMClient",
@@ -969,8 +1282,10 @@ __all__ = [
     "PluginDependency",
     "PluginManifest",
     "PluginRegistry",
+    "Reversibility",
     "RiskLevel",
     "Role",
+    "RunRecord",
     "Sandbox",
     "Skill",
     "SkillMeta",
@@ -978,11 +1293,16 @@ __all__ = [
     "Step",
     "StepResult",
     "StepStatus",
+    "SWAG_TAINT_KEY",
     "StreamingLLMClient",
     "TaskPlan",
+    "TaintTracker",
     "Tool",
     "ToolCall",
     "ToolRegistry",
+    "TrustLevel",
+    "UndoController",
+    "UndoResult",
     "UserConfigOption",
     "default_requires_approval",
     "resolve_sandbox_path",

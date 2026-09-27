@@ -26,6 +26,9 @@ src/swag_bot/
   mcp/              MCP client and swag serve-mcp
   models/           LiteLLM / Ollama / bring-your-own-key clients
   memory/           pluggable MemoryStore
+  onboarding/       one-prompt setup, MCP approval bridge, install links
+  browser/          headless browser tools for plugins/browser (Playwright optional)
+  extension/        Chrome native messaging host (front end, not an owned package)
 tests/fakes.py      FakeLLMClient, FakeSandbox, InMemoryMemoryStore, AutoApprovePrompter
 ```
 
@@ -137,7 +140,10 @@ bodies stay empty until the command is invoked.
 
 ### Safety
 
-`AutonomyLevel`: `ask-always`, `ask-risky`, `auto`.
+`AutonomyLevel`: `ask-always`, `ask-risky`, `ask-irreversible`, `auto`.
+`ask-irreversible` prompts only for `Reversibility.IRREVERSIBLE`. The default
+stays `ask-risky`. `UndoController` is the optional snapshot hook the loop
+calls around a run; `swag undo` restores those snapshots.
 
 `RiskLevel`: `read`, `write`, `execute`, `network`, `destructive`.
 
@@ -171,11 +177,16 @@ An empty query returns nothing. `get` returns None when the id is missing.
 content and metadata values, newest match first.
 
 `TaskPlan` holds `Step`s. Status values: `pending`, `doing`, `verifying`,
-`done`, `failed`, `skipped`. `done` means the step ran and the check passed.
-Step ids are unique, and `depends_on` may only name steps in the same plan.
-`StepResult` is the outcome of one step. `AgentLoop.run(goal)` returns the
-plan. `PlanDoVerifyLoop` in `core/loop.py` is the implementation. `swag run`
-passes recalled memories and selected skill instructions in as planner context.
+`done`, `failed`, `unverified`, `skipped`. `done` means the step ran and a
+check passed with cited evidence. `unverified` means a pass was claimed
+without evidence. Step ids are unique, and `depends_on` may only name steps
+in the same plan. `StepResult` is the outcome of one step and may carry
+`evidence_ids` and `check_results`. `Step.checks` holds machine-checkable
+acceptance checks. The shapes are the Evidence Contract in
+`docs/spec/evidence-contract.md` (`Check`, `CheckResult`, `Evidence`,
+`RunRecord`). `AgentLoop.run(goal)` returns the plan. `PlanDoVerifyLoop` in
+`core/loop.py` is the implementation. `swag run` passes recalled memories
+and selected skill instructions in as planner context.
 
 ### MCP
 
@@ -203,18 +214,28 @@ load `.env` by itself.
 
 | Command | Status |
 | --- | --- |
-| `swag run "<goal>"` | plans, runs, and verifies; writes `summary.md` |
+| `swag run "<goal>"` | plans, runs, and verifies; writes `summary.md`. `--record` also writes a run bundle |
+| `swag replay <bundle>` | re-executes a bundle from saved model responses, or live to compare |
+| `swag bundle inspect\|export` | summarize a bundle, or zip it for a bug report |
 | `swag plugin` / `swag skill` | load, install, and list Cowork-compatible plugins and skills |
 | `swag safety log\|policy` | action log and autonomy rules |
 | `swag mcp list\|tools\|add\|remove` | MCP servers in `~/.swag/mcp.json` |
-| `swag serve-mcp` | stdio MCP server; `--http` for streamable HTTP. Runs tasks and lists skills |
+| `swag serve-mcp` | stdio MCP server; `--http` for streamable HTTP. Runs tasks and lists skills. Approvals use MCP elicitation, not the terminal |
+| `swag setup --auto` | detect a key, Ollama, or a local OpenAI-compatible server and write `config.toml`. Asks before a model download. Falls back to a free-cloud menu. See `docs/MODELS.md` |
+| `swag install-mcp` | print the install command or link for an MCP client |
+| `swag extension install\|status\|remove` | Chrome native messaging host for the side panel in `extension/` |
 | `swag model list\|test\|set` | Ollama by default, LiteLLM for bring-your-own-key providers |
 | `swag memory add\|search\|list\|forget` | SQLite by default |
 | `swag version` | prints `swag-bot` and the version |
-| `swag doctor` | prints config and optional-dep status |
+| `swag doctor` | prints config and optional-dep status. `--json` adds a `ready` field and never prints secrets |
 
-Optional extras, not installed by CI: `.[models]` (litellm), `.[mcp]` (mcp),
-`.[sandbox]` (docker). `.[dev]` is pytest, ruff, and mypy.
+`swag extension` is a front end. It calls `execute_goal` and does not own
+`core`, `safety`, or `mcp`. The side panel lives in `extension/` and is not
+imported by the agent loop.
+
+Optional extras: `.[models]` (litellm), `.[mcp]` (mcp), `.[sandbox]` (docker).
+CI installs `.[dev,mcp]` so the stdio approval test runs. `.[dev]` is pytest,
+ruff, and mypy.
 
 ## Rules for the parallel agents
 

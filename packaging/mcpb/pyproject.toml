@@ -1,0 +1,8 @@
+[project]
+name = "swag-bot-desktop"
+version = "0.1.0"
+description = "Claude Desktop entry point for Swag Bot."
+requires-python = ">=3.11"
+dependencies = [
+    "swag-bot[mcp] @ git+https://github.com/vishnu-Swagan/swag-bot",
+]

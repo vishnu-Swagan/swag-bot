@@ -14,6 +14,7 @@ from swag_bot.errors import ConfigError, SwagError
 from swag_bot.interfaces import RiskLevel, default_requires_approval
 from swag_bot.safety.log import ActionLog, default_action_log_path
 from swag_bot.safety.policy import change_grant, grants_path, load_grants, load_suspended_grants
+from swag_bot.safety.undo import UndoLedger, describe_undo
 
 app = typer.Typer(
     help="Permissions, autonomy, and the action log.",
@@ -74,6 +75,10 @@ def show_policy() -> None:
     console.print(f"autonomy: {autonomy.value}")
     console.print("ask-always: prompt for every action, including reads")
     console.print("ask-risky: prompt unless the risk is read")
+    console.print(
+        "ask-irreversible: prompt only at the point of no return "
+        "(irreversible actions). ask-risky is unchanged and is still the default"
+    )
     console.print("auto: do not prompt; still log every action; a hard deny still applies")
     console.print("")
     console.print("Risky actions (prompted at ask-risky):")
@@ -84,6 +89,20 @@ def show_policy() -> None:
     console.print("- unknown permission names")
     console.print("A destructive risk is never lowered.")
     console.print("Writes outside the workdir are destructive.")
+    taint = settings.taint
+    firewall = "on" if taint.enabled and taint.mode.value != "off" else "off"
+    console.print("")
+    console.print(
+        f"taint firewall: {firewall} "
+        f"(mode={taint.mode.value}, reader={taint.reader.value}, "
+        f"workspace={taint.workspace.value}, memory={taint.memory.value})"
+    )
+    console.print(
+        "Untrusted data (web pages, MCP results, plugin output, files outside the "
+        "workspace) cannot by itself drive network, destructive, credential, or send "
+        "actions. escalate asks and shows the source; block denies; auto denies "
+        "because it cannot ask. See docs/TAINT.md."
+    )
     console.print("")
     table = Table(title=f"prompts at {autonomy.value}", show_header=True, header_style="bold")
     table.add_column("risk")
@@ -132,6 +151,35 @@ def revoke_permission(
 ) -> None:
     """Remove one permission from a plugin."""
     _mutate_grant(plugin, permission, add=False)
+
+
+def undo_command(
+    to: Annotated[
+        str | None,
+        typer.Option(
+            "--to",
+            help="Step id. Restore the workspace to the start of this step.",
+        ),
+    ] = None,
+    run: Annotated[
+        str | None,
+        typer.Option("--run", help="Run id. Defaults to the most recent run."),
+    ] = None,
+) -> None:
+    """Roll a run's workspace back, including files changed by shell commands.
+
+    Snapshots live under ``$SWAG_HOME/undo``. Actions that left the machine
+    (network, mail, payments, files outside the workdir) are listed and are
+    not restored. A registered compensation runs when this process can call it.
+    """
+    console = _console()
+    try:
+        ledger = UndoLedger.load(run)
+        result = ledger.rollback_run(to_step=to)
+    except SwagError as exc:
+        console.print(str(exc))
+        raise typer.Exit(code=1) from exc
+    console.print(describe_undo(result))
 
 
 def _mutate_grant(plugin: str, permission: str, *, add: bool) -> None:

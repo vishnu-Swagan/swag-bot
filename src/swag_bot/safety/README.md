@@ -12,6 +12,7 @@ The narrow exception is the `serve-mcp` wrapper in `src/swag_bot/cli.py`: update
 - A `PermissionPolicy` for `settings.autonomy`. Use `default_requires_approval`. You may deny more often. Do not prompt less often than that helper.
 - An `ApprovalPrompter` for real use. Tests use `AutoApprovePrompter` in `tests/fakes.py`.
 - An append-only action log of `ActionLogEntry`. Redact secrets before they are stored. `approver` is `policy`, `user`, or `auto`.
+- An undo ledger (`undo.py`) that snapshots the workdir before writes and shell commands. `swag undo` restores a run. See `docs/SAFETY.md`.
 - `build_sandbox`, `build_permission_policy`, and `build_prompter` in `__init__.py`. Keep those names.
 
 `docker` is an optional extra (`pip install -e ".[sandbox]"`). Do not make it a required dependency.
@@ -22,4 +23,4 @@ The narrow exception is the `serve-mcp` wrapper in `src/swag_bot/cli.py`: update
 
 ## Status
 
-Implemented. See `docs/SAFETY.md`.
+Implemented. See `docs/SAFETY.md`. The taint firewall lives in `taint.py` and `quarantine.py`; the threat model is `docs/TAINT.md`.

@@ -33,3 +33,17 @@ class MCPToolRegistry:
 
     def call(self, tool_call: ToolCall) -> str:
         return self._client.call_tool(tool_call.name, tool_call.arguments)
+
+
+def compensation_annotation(tool: Tool) -> dict[str, Any] | None:
+    """Return the ``swagCompensation`` object on ``tool``, if the server sent one.
+
+    MCP tool metadata is copied onto ``Tool.annotations``. A declaration looks
+    like ``{"tool": "server__create_issue", "inverse": "server__close_issue"}``.
+    The undo ledger turns that into a compensating action. This module does
+    not import the safety package; it only reads the annotation.
+    """
+    raw = tool.annotations.get("swagCompensation")
+    if isinstance(raw, dict):
+        return dict(raw)
+    return None

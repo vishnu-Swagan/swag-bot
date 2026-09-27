@@ -21,6 +21,7 @@ from swag_bot.safety.sandbox import (
     docker_backend,
     make_sandbox,
 )
+from swag_bot.safety.taint import build_taint_tracker
 
 
 def build_sandbox(settings: Settings, workdir: Path | None = None) -> Sandbox:
@@ -34,8 +35,20 @@ def build_sandbox(settings: Settings, workdir: Path | None = None) -> Sandbox:
 
 
 def build_permission_policy(settings: Settings, workdir: Path | None = None) -> PermissionPolicy:
-    """Policy for ``settings.autonomy``, including grants from ``$SWAG_HOME/grants.json``."""
-    return DefaultPermissionPolicy(settings.autonomy, grants=load_grants(), workdir=workdir)
+    """Policy for ``settings.autonomy``, including grants from ``$SWAG_HOME/grants.json``.
+
+    When the taint firewall is on, tainted sinks are escalated or denied.
+    See ``docs/TAINT.md``.
+    """
+    taint_mode = "off"
+    if settings.taint.enabled:
+        taint_mode = settings.taint.mode.value
+    return DefaultPermissionPolicy(
+        settings.autonomy,
+        grants=load_grants(),
+        workdir=workdir,
+        taint_mode=taint_mode,
+    )
 
 
 def build_prompter(settings: Settings) -> ApprovalPrompter:
@@ -59,6 +72,7 @@ __all__ = [
     "build_permission_policy",
     "build_prompter",
     "build_sandbox",
+    "build_taint_tracker",
     "default_action_log_path",
     "docker_backend",
 ]

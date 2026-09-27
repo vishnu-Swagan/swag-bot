@@ -1,32 +1,20 @@
 """Expose Swag Bot as an MCP server.
 
 ``runner`` and ``skills_provider`` are injected so this module does not
-import the core loop or the plugin loader.
+import the core loop or the plugin loader. Tool registration, including
+elicitation for approvals, lives in ``swag_bot.onboarding.mcp_bridge``.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Sequence
-from typing import Any, TypeVar, cast
+from typing import Any
 
 from swag_bot import __version__
 from swag_bot.errors import SwagError
 
 TaskRunner = Callable[[str], str]
 SkillProvider = Callable[[], Sequence[Any]]
-F = TypeVar("F", bound=Callable[..., Any])
-
-
-def _typed_tool(server: Any, *, description: str) -> Callable[[F], F]:
-    """Apply ``server.tool`` without erasing the wrapped function's type.
-
-    ``mcp`` is an optional, untyped extra (``ignore_missing_imports``). Under
-    strict mypy that decorator would make the tool functions untyped. The
-    cast keeps their signatures. Runtime behavior is unchanged.
-    """
-    decorator = server.tool(description=description)
-    return cast(Callable[[F], F], decorator)
 
 
 def build_swag_mcp_server(
@@ -34,9 +22,11 @@ def build_swag_mcp_server(
     runner: TaskRunner | None = None,
     skills_provider: SkillProvider | None = None,
 ) -> Any:
-    """MCP server with ``swag_run_task`` and ``swag_list_skills``.
+    """MCP server for tasks, skills, and setup status.
 
     Raises ``SwagError`` when the optional ``mcp`` package is not installed.
+    Approvals are routed through MCP elicitation or a preapproved grant.
+    The server does not read stdin or write prompts to stdout.
     """
     try:
         from mcp.server.mcpserver import MCPServer
@@ -48,48 +38,14 @@ def build_swag_mcp_server(
 
     server = MCPServer(
         "swag-bot",
-        instructions="Run a Swag Bot task or list Agent Skills.",
+        instructions=(
+            "Run a Swag Bot task or list Agent Skills. "
+            "Write and shell actions ask with MCP elicitation when you support it. "
+            "Otherwise they are denied unless the user preapproved them."
+        ),
         version=__version__,
     )
+    from swag_bot.onboarding.mcp_bridge import register_tools
 
-    @_typed_tool(
-        server,
-        description="Run a Swag Bot task. Pass the goal; the result is a short summary.",
-    )
-    def swag_run_task(goal: str) -> str:
-        """Run a Swag Bot task and return a short summary."""
-        if not goal or not goal.strip():
-            raise ValueError("goal must not be empty")
-        if runner is None:
-            return "No task runner is configured."
-        summary = runner(goal)
-        if isinstance(summary, str):
-            return summary
-        return json.dumps(summary)
-
-    @_typed_tool(server, description="List Agent Skills (name and description).")
-    def swag_list_skills() -> str:
-        """List Agent Skills as a JSON array of name and description."""
-        if skills_provider is None:
-            return "[]"
-        return json.dumps([_skill_row(item) for item in skills_provider()])
-
+    register_tools(server, runner=runner, skills_provider=skills_provider)
     return server
-
-
-def _skill_row(item: Any) -> dict[str, str]:
-    if isinstance(item, dict):
-        return {
-            "name": str(item.get("name", "")),
-            "description": str(item.get("description", "")),
-        }
-    meta = getattr(item, "meta", None)
-    if meta is not None:
-        return {
-            "name": str(getattr(meta, "name", "")),
-            "description": str(getattr(meta, "description", "")),
-        }
-    return {
-        "name": str(getattr(item, "name", "")),
-        "description": str(getattr(item, "description", "")),
-    }

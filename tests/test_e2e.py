@@ -35,6 +35,18 @@ _COMMANDS = (
     ["plugin", "validate", "--help"],
     ["skill", "--help"],
     ["skill", "list"],
+    ["skill", "learn", "--help"],
+    ["skill", "candidates"],
+    ["skill", "promote", "--help"],
+    ["skill", "reject", "--help"],
+    ["skill", "recheck", "--help"],
+    ["gallery", "--help"],
+    ["gallery", "search", "--help"],
+    ["gallery", "info", "--help"],
+    ["gallery", "install", "--help"],
+    ["gallery", "keygen", "--help"],
+    ["gallery", "sign", "--help"],
+    ["gallery", "bundle", "--help"],
     ["safety", "--help"],
     ["safety", "log"],
     ["safety", "policy"],
@@ -49,12 +61,18 @@ _COMMANDS = (
     ["model", "--help"],
     ["model", "list"],
     ["model", "test", "--help"],
+    ["model", "probe", "--help"],
     ["model", "set", "--help"],
     ["memory", "--help"],
     ["memory", "add", "--help"],
     ["memory", "search", "--help"],
     ["memory", "list"],
     ["memory", "forget", "--help"],
+    ["browser-mcp", "--help"],
+    ["extension", "--help"],
+    ["extension", "install", "--help"],
+    ["extension", "status", "--help"],
+    ["extension", "remove", "--help"],
 )
 
 
@@ -88,6 +106,14 @@ def test_swag_run_selects_a_skill_saves_memory_and_writes_summary(
                         "title": "Triage the issue",
                         "instruction": "Read the skill and draft a reply",
                         "success_criteria": "a reply was drafted",
+                        "checks": [
+                            {
+                                "id": "noted",
+                                "kind": "command",
+                                "command": "true",
+                                "expected_exit": 0,
+                            }
+                        ],
                     }
                 ]
             ),

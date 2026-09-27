@@ -11,6 +11,7 @@ from swag_bot.interfaces import (
     ApprovalPrompter,
     MCPServerSpec,
     PermissionPolicy,
+    TaintTracker,
 )
 from swag_bot.mcp.cli import app
 from swag_bot.mcp.client import ActionRecorder, SessionOpener, SwagMCPClient, build_client
@@ -24,6 +25,7 @@ def build_mcp_client(
     recorder: ActionRecorder | None = None,
     opener: SessionOpener | None = None,
     servers: list[MCPServerSpec] | None = None,
+    taint: TaintTracker | None = None,
 ) -> SwagMCPClient:
     """Client for the MCP servers in ``~/.swag/mcp.json``.
 
@@ -39,6 +41,7 @@ def build_mcp_client(
         recorder=recorder,
         opener=opener,
         servers=servers,
+        taint=taint,
     )
 
 

@@ -1,0 +1,14 @@
+{
+  "name": "swag-bot",
+  "displayName": "Swag Bot",
+  "version": "0.1.0",
+  "description": "Hand a long, checkable task to Swag Bot over MCP. Swag Bot plans the task, does the work, and checks the result on this machine.",
+  "author": {
+    "name": "Vishnu M",
+    "url": "https://github.com/vishnu-Swagan/swag-bot"
+  },
+  "license": "MIT",
+  "keywords": ["agent", "mcp", "swag-bot"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

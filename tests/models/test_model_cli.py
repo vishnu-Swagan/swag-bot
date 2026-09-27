@@ -88,6 +88,35 @@ def test_model_test_sends_one_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     assert scripted.prompts == ["Reply with the single word: ok"]
 
 
+def test_model_list_suggests_pull_when_the_default_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "swag_bot.models.cli.OllamaClient.list_models",
+        lambda self, timeout=1.0: ["mistral:latest"],
+    )
+    result = runner.invoke(app, ["model", "list"])
+    text = visible(result)
+    assert result.exit_code == 0
+    assert "ollama pull llama3.2" in text
+    assert "not pulled" in text
+
+
+def test_model_test_suggests_pull_before_a_404(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "swag_bot.models.cli.OllamaClient.list_models",
+        lambda self, timeout=1.0: [],
+    )
+
+    def unused(config: object) -> object:
+        raise AssertionError("the missing model should be reported before the HTTP call")
+
+    monkeypatch.setattr("swag_bot.models.cli.get_llm_client", unused)
+    result = runner.invoke(app, ["model", "test"])
+    assert result.exit_code == 1
+    assert "ollama pull llama3.2" in visible(result)
+
+
 def test_model_test_redacts_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai-secret")
 

@@ -345,6 +345,12 @@ The project license is MIT. Do not ship a plugin that vendors AGPL, SSPL, or
 other network-copyleft code into Swag Bot itself. A plugin the user installs
 is their choice. The example in this repository is MIT.
 
+To publish through a signed gallery instead of a raw git install, see
+[GALLERY.md](GALLERY.md). `swag gallery install` verifies a minisign signature
+and runs a static scan before this permission prompt. `swag plugin install`
+is unchanged and does not require a signature, so a local checkout can still
+be installed while you are editing it.
+
 ## Compatibility with Claude Cowork and Claude Code
 
 The same directory loads in both places when you follow the Claude layout.
@@ -366,3 +372,10 @@ The same directory loads in both places when you follow the Claude layout.
 `plugins/example-github-helper/` is a complete sample: a manifest with
 `permissions`, one skill, one slash command, one sub-agent, and `.mcp.json`
 aimed at the official GitHub MCP server without a token in the file.
+
+`plugins/browser/` is the first-party browser plugin and the reference for a
+plugin whose MCP server is part of Swag Bot. `swag browser-mcp` drives
+headless Chromium. Install, grants, and the sandbox trade-off are in
+`plugins/browser/README.md`. The optional `browser` extra
+(`pip install 'swag-bot[browser]'`) installs Playwright. The core install
+does not.

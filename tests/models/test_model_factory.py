@@ -49,6 +49,17 @@ def test_cloud_providers_use_litellm() -> None:
         assert client.model == model
 
 
+def test_timeout_from_settings_overrides_the_client_default() -> None:
+    client = get_llm_client(Settings())
+    assert isinstance(client, OllamaClient)
+    assert client.timeout == 120
+    slower = get_llm_client(
+        Settings(model=ModelSettings(provider="ollama", model="qwen2.5:7b", timeout=600))
+    )
+    assert isinstance(slower, OllamaClient)
+    assert slower.timeout == 600
+
+
 def test_unknown_provider() -> None:
     with pytest.raises(ConfigError, match="unknown model provider"):
         get_llm_client(Settings(model=ModelSettings(provider="made-up", model="x")))

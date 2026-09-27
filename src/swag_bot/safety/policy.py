@@ -12,13 +12,17 @@ from pathlib import Path
 from swag_bot.config import swag_home
 from swag_bot.errors import SandboxError, SwagError
 from swag_bot.interfaces import (
+    SWAG_TAINT_KEY,
     ActionRequest,
     AutonomyLevel,
     Permission,
+    Reversibility,
     RiskLevel,
     default_requires_approval,
     resolve_sandbox_path,
 )
+from swag_bot.safety.compensation import CompensationRegistry
+from swag_bot.safety.reversibility import classify_reversibility
 
 _KNOWN_PERMISSIONS = {item.value for item in Permission}
 
@@ -212,6 +216,21 @@ def _higher(left: RiskLevel, right: RiskLevel) -> RiskLevel:
     return left if _SEVERITY[left] >= _SEVERITY[right] else right
 
 
+def _declared_risk(action: ActionRequest) -> RiskLevel | None:
+    """Risk copied from tool metadata, not from the model's arguments.
+
+    ``classify`` still refuses to lower ``destructive``. Text that deletes,
+    spends, or calls the network can raise this further.
+    """
+    raw = action.arguments.get("risk_hint")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return RiskLevel(raw)
+    except ValueError:
+        return None
+
+
 class DefaultPermissionPolicy:
     """Classify actions and decide allow, prompt, or hard deny.
 
@@ -227,12 +246,16 @@ class DefaultPermissionPolicy:
         *,
         grants: Mapping[str, set[str] | Sequence[str]] | None = None,
         workdir: Path | None = None,
+        compensations: CompensationRegistry | None = None,
+        taint_mode: str = "off",
     ) -> None:
         self._autonomy = autonomy
         self._grants: dict[str, set[str]] = {
             name: set(values) for name, values in (grants or {}).items()
         }
         self._workdir = workdir
+        self._compensations = compensations
+        self._taint_mode = taint_mode if taint_mode in {"off", "escalate", "block"} else "off"
 
     @property
     def autonomy(self) -> AutonomyLevel:
@@ -258,14 +281,32 @@ class DefaultPermissionPolicy:
         if not current:
             self._grants.pop(plugin, None)
 
+    def bind_compensations(self, registry: CompensationRegistry) -> None:
+        """Use ``registry`` when deciding whether an external action has an inverse."""
+        self._compensations = registry
+
     def classify(self, action: ActionRequest) -> RiskLevel:
         """Risk used for the decision. Never lower than ``destructive``."""
         if action.risk is RiskLevel.DESTRUCTIVE:
             return RiskLevel.DESTRUCTIVE
         return _higher(action.risk, self._infer(action))
 
+    def reversibility(self, action: ActionRequest) -> Reversibility:
+        """Whether the undo ledger can restore ``action``.
+
+        ``ask-irreversible`` prompts only when this is ``irreversible``.
+        ``ask-risky`` does not use this to skip a prompt.
+        """
+        return classify_reversibility(
+            action,
+            compensations=self._compensations,
+            workdir=self._workdir,
+        )
+
     def requires_approval(self, action: ActionRequest) -> bool:
         """True when the user must be asked. May be true more often than the default."""
+        if self._autonomy is AutonomyLevel.ASK_IRREVERSIBLE:
+            return self.reversibility(action) is Reversibility.IRREVERSIBLE
         return default_requires_approval(self.autonomy, self.classify(action))
 
     def is_denied(self, action: ActionRequest) -> bool:
@@ -277,10 +318,18 @@ class DefaultPermissionPolicy:
         return needed not in self._grants.get(plugin, set())
 
     def decide(self, action: ActionRequest) -> PolicyDecision:
-        """Allow, prompt, or deny. A hard deny does not prompt."""
+        """Allow, prompt, or deny. A hard deny does not prompt.
+
+        A taint stamp from ``TaintTracker.prepare`` can deny or force a
+        prompt when untrusted data would drive a network, destructive,
+        credential, or send action. ``taint_mode`` ``off`` ignores the stamp.
+        """
         if self.is_denied(action):
             return PolicyDecision.DENY
-        if self.requires_approval(action):
+        taint = _taint_enforcement(action, mode=self._taint_mode)
+        if taint is PolicyDecision.DENY:
+            return PolicyDecision.DENY
+        if taint is PolicyDecision.PROMPT or self.requires_approval(action):
             return PolicyDecision.PROMPT
         return PolicyDecision.ALLOW
 
@@ -292,8 +341,17 @@ class DefaultPermissionPolicy:
             risk = RiskLevel.READ
         if kind in _WRITE_KINDS:
             risk = RiskLevel.WRITE
+        declared = _declared_risk(action)
         if kind in _SHELL_KINDS or _SHELL_TEXT.search(blob):
-            risk = _higher(risk, RiskLevel.EXECUTE)
+            # A tool that declares its own risk (a read of an open page, a
+            # form submit) is not forced up to ``execute``. Untagged tool
+            # calls still are.
+            if declared is None:
+                risk = _higher(risk, RiskLevel.EXECUTE)
+            else:
+                risk = _higher(risk, declared)
+        elif declared is not None:
+            risk = _higher(risk, declared)
         if kind in _NETWORK_KINDS or _NETWORK_TEXT.search(blob) or _SEND_TEXT.search(blob):
             risk = _higher(risk, RiskLevel.NETWORK)
         destructive = (
@@ -313,6 +371,26 @@ class DefaultPermissionPolicy:
         if permission not in _KNOWN_PERMISSIONS:
             risk = _higher(risk, RiskLevel.WRITE)
         return risk
+
+
+def _taint_enforcement(action: ActionRequest, *, mode: str) -> PolicyDecision | None:
+    """How a ``_swag_taint`` stamp changes the decision, or None to leave it.
+
+    ``block`` always denies a tainted sink. ``escalate`` prompts, unless the
+    stamp itself says ``deny`` (that is what ``auto`` autonomy writes, because
+    there is no person to ask). A missing or untainted stamp changes nothing.
+    """
+    if mode == "off":
+        return None
+    raw = action.arguments.get(SWAG_TAINT_KEY)
+    if not isinstance(raw, dict) or raw.get("tainted") is not True:
+        return None
+    enforcement = raw.get("enforcement")
+    if enforcement == "deny" or mode == "block":
+        return PolicyDecision.DENY
+    if enforcement == "prompt" or mode == "escalate":
+        return PolicyDecision.PROMPT
+    return None
 
 
 def _plugin_name(action: ActionRequest) -> str | None:

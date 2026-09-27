@@ -209,6 +209,30 @@ def test_stream_falls_back_without_buffering_a_single_chunk() -> None:
     assert transport.calls[1]["stream"] is True
 
 
+def test_complete_structured_sends_json_schema_as_format() -> None:
+    transport = ScriptedTransport()
+    transport.push(
+        200,
+        {"model": "qwen2.5:3b", "message": {"role": "assistant", "content": '{"ok": true}'}},
+    )
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+    client = _client(transport, model="qwen2.5:3b")
+    text = client.complete_structured([Message.user("probe")], schema).message.content
+    assert text == '{"ok": true}'
+    body = transport.calls[0]["body"]
+    assert isinstance(body, dict)
+    assert body["format"] == schema
+    assert "tools" not in body
+
+
+def test_show_model_reads_context_length() -> None:
+    transport = ScriptedTransport()
+    transport.push(200, {"model_info": {"qwen2.context_length": 32768}})
+    client = _client(transport, model="qwen2.5:3b")
+    assert client.show_model() == {"model_info": {"qwen2.context_length": 32768}}
+    assert transport.calls[0]["url"] == "http://ollama.test/api/show"
+
+
 def test_list_models_and_unreachable() -> None:
     transport = ScriptedTransport()
     transport.push(200, {"models": [{"name": "llama3.2:latest"}, {"model": "qwen2.5:7b"}]})
@@ -222,9 +246,46 @@ def test_list_models_and_unreachable() -> None:
 
 def test_http_error_is_a_model_error() -> None:
     transport = ScriptedTransport()
-    transport.push(404, {"error": "model not found"})
-    with pytest.raises(ModelError, match="model not found"):
+    transport.push(404, {"error": "model 'llama3.2' not found"})
+    with pytest.raises(ModelError, match="ollama pull llama3.2") as caught:
         _client(transport).complete("hi")
+    assert "HTTP 404" in str(caught.value)
+    assert "not found" in str(caught.value)
+
+
+def test_chat_sends_ollama_json_schema_format() -> None:
+    transport = ScriptedTransport()
+    transport.push(
+        200,
+        {"model": "llama3.2", "message": {"role": "assistant", "content": "{}"}, "done": True},
+    )
+    schema = {
+        "type": "json_schema",
+        "json_schema": {"name": "task_plan", "schema": {"type": "object", "required": ["steps"]}},
+    }
+    _client(transport).chat([Message.user("plan")], response_format=schema)
+    body = transport.calls[0]["body"]
+    assert isinstance(body, dict)
+    assert body["format"]["type"] == "object"
+    assert body["format"]["required"] == ["steps"]
+
+
+def test_rejected_format_is_retried_without_schema() -> None:
+    transport = ScriptedTransport()
+    transport.push(400, {"error": "invalid format schema"})
+    transport.push(
+        200,
+        {"model": "llama3.2", "message": {"role": "assistant", "content": "{}"}, "done": True},
+    )
+    text = _client(transport).chat(
+        [Message.user("plan")],
+        response_format={"type": "json_object"},
+    )
+    assert text.message.content == "{}"
+    first = transport.calls[0]["body"]
+    second = transport.calls[1]["body"]
+    assert isinstance(first, dict) and first["format"] == "json"
+    assert isinstance(second, dict) and "format" not in second
 
 
 def test_error_text_redacts_secret_values(monkeypatch: pytest.MonkeyPatch) -> None:

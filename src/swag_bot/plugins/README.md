@@ -33,3 +33,7 @@ A loader and installer for Claude Cowork / Claude Code plugins.
 `swag plugin list|install|enable|disable|remove|info|show|validate`
 
 `swag skill list`
+
+`swag gallery search|info|install|keygen|sign|bundle` checks a static gallery
+index. Signature verification and the static scanner run before the existing
+install permission prompt. See `docs/GALLERY.md`.

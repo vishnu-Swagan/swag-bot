@@ -11,14 +11,26 @@ default, and it does not need an API key.
 
 ## Features
 
-- Plan, do, and verify loop (`swag run`), with parallel independent steps
+- Plan, do, and verify loop (`swag run`), with parallel independent steps and step handoff that cites evidence ids
+- Evidence ledger and acceptance checks. A step is not done without cited evidence ([docs/spec/evidence-contract.md](docs/spec/evidence-contract.md))
+- Honest plan failure: `PLAN FALLBACK` when the model does not return a plan, and `--strict-plan` to stop instead
 - Local sandbox by default, optional Docker sandbox
-- Permission policy with autonomy levels `ask-always`, `ask-risky`, and `auto`
+- Permission policy with autonomy levels `ask-always`, `ask-risky`, `ask-irreversible`, and `auto`. One approval card shows reversibility and taint
+- Undo ledger and reversibility labels (`reversible`, `compensable`, `irreversible`) ([docs/SAFETY.md](docs/SAFETY.md))
+- Taint firewall on tool output, so a fetched page or plugin cannot by itself send mail, hit the network, read secrets, or delete ([docs/TAINT.md](docs/TAINT.md))
+- Opt-in uncertainty escalation and a small jury for irreversible actions ([docs/ESCALATION.md](docs/ESCALATION.md))
+- Small-model harness: `swag model probe`, tiny/standard/frontier scaffolds ([docs/MODELS.md](docs/MODELS.md))
+- One-prompt setup: `scripts/install.sh` and `swag setup --auto` (Ollama, LM Studio, Jan, llama.cpp, GPT4All, and a free-cloud menu)
+- Run bundles and offline `swag replay` ([docs/spec/run-bundle.md](docs/spec/run-bundle.md))
+- Verification-gated skill learning: a candidate is promoted only after the evidence ledger and a bundle replay both pass
 - Append-only action log with secret redaction
-- Claude Cowork-compatible plugins, Agent Skills, slash commands, and a marketplace installer
+- Claude Cowork-compatible plugins, Agent Skills, slash commands, and a signed minisign gallery ([docs/GALLERY.md](docs/GALLERY.md))
 - MCP client (stdio and streamable HTTP) and `swag serve-mcp`
+- Headless browser plugin (`plugins/browser`, optional `browser` extra) and a Chrome side panel (`extension/`)
 - Ollama by default; OpenAI, Anthropic, Gemini, and OpenRouter through LiteLLM
-- Pluggable memory: SQLite (default), a JSON file, or an external agentmemory server
+- Pluggable memory: SQLite (default), a JSON file, or an external agentmemory server. Memory writes record which run they came from
+
+Specs and model notes: [docs/MODELS.md](docs/MODELS.md), [docs/spec/evidence-contract.md](docs/spec/evidence-contract.md), [docs/spec/run-bundle.md](docs/spec/run-bundle.md).
 
 ## Install
 
@@ -54,11 +66,60 @@ Optional extras (add `@v0.1.0` to the URL to pin the release):
 python -m pip install "swag-bot[models] @ git+https://github.com/vishnu-Swagan/swag-bot.git"
 python -m pip install "swag-bot[mcp] @ git+https://github.com/vishnu-Swagan/swag-bot.git"
 python -m pip install "swag-bot[sandbox] @ git+https://github.com/vishnu-Swagan/swag-bot.git"
+python -m pip install "swag-bot[browser] @ git+https://github.com/vishnu-Swagan/swag-bot.git"
 ```
 
 `models` installs LiteLLM. `mcp` installs the official MCP SDK. `sandbox`
-installs the Docker SDK, used when the `docker` CLI is not on `PATH`. A
-checkout for development is `python -m pip install -e ".[dev]"`.
+installs the Docker SDK, used when the `docker` CLI is not on `PATH`.
+`browser` installs Playwright for the headless browser plugin. A checkout
+for development is `python -m pip install -e ".[dev]"`.
+
+## One command
+
+From a checkout, this installs uv after asking, installs Swag Bot, picks a
+model, and runs the task. It asks again before downloading a model.
+
+```bash
+sh scripts/install.sh -- run "Summarize the files in this directory"
+```
+
+`--dry-run` prints the commands and changes nothing. `--yes` skips both
+questions. The PowerShell twin is `scripts/install.ps1`.
+
+Without cloning, uv can install from Git and run one task:
+
+```bash
+uvx --from 'swag-bot[models] @ git+https://github.com/vishnu-Swagan/swag-bot' swag-bot run "Summarize the files in this directory"
+```
+
+pipx:
+
+```bash
+pipx install "swag-bot[mcp,models] @ git+https://github.com/vishnu-Swagan/swag-bot"
+swag setup --auto
+swag run "Summarize the files in this directory"
+```
+
+`swag setup --auto` uses an API key it finds in the environment
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or
+`OPENROUTER_API_KEY`, and the free-plan names in
+[docs/MODELS.md](docs/MODELS.md)), an Ollama model of at least 7B, or another
+local OpenAI-compatible server that is already running (LM Studio, Jan,
+llama.cpp, llamafile, GPT4All). Otherwise it offers to pull `qwen2.5:7b`
+(about 4.7 GB) and waits for a yes, or, when nothing local is available,
+prints a free-cloud menu. It does not install Ollama or those apps for you.
+A 3B model is not selected when the size is visible in the model id.
+Point at any other OpenAI-compatible server with
+`swag setup --auto --base-url http://localhost:1234/v1`.
+Local servers keep prompts on this machine. A free cloud plan does not: it
+sends prompts to that provider and rate-limits them. The trade-off, the key
+pages, and the default model ids are in [docs/MODELS.md](docs/MODELS.md).
+
+The PyPI project is not published yet. Flip `PYPI_PUBLISHED` in
+`src/swag_bot/onboarding/distribution.py` (and the same flag in the two
+install scripts) after it is. The commands then become `uvx swag-bot run "..."`.
+
+`swag doctor --json` prints `"ready": true` or false and never prints a key.
 
 Swag Bot does not read a `.env` file. Export keys yourself. `.env.example`
 lists the names. `swag doctor` prints `set` or `unset` and never the value.
@@ -81,7 +142,10 @@ To pin that in `$SWAG_HOME/config.toml` (default directory `~/.swag`):
 
 ```bash
 swag model set ollama/llama3.2
+swag model probe
 ```
+
+`swag model probe` asks the active model for one JSON object and one tool call, reads the context length when the provider reports it, and caches the result in `$SWAG_HOME/harness/capability.json`. `swag run` does the same probe once when `model.harness` is `auto` (the default) and a real model client is in use. A model at or under about 4B parameters gets a tighter scaffold: shorter prompts with no sample values to copy, one tool at a time, at most three steps, and JSON-schema output where the provider supports it. A failing step can be retried on `model.fallback` when `model.budget` allows the extra time and cost. Local fallbacks cost nothing, so a budget of `$0` still allows them. Set `model.harness` to `off` to keep the original prompts and the 120 second request timeout.
 
 ## Quickstart with a bring-your-own-key provider
 
@@ -116,11 +180,27 @@ answer. After the run, a summary is saved to memory.
 The output directory receives:
 
 - `plan.json`
-- `action-log.jsonl`
+- `action-log.jsonl` (clipped action outcomes; kept for compatibility)
+- `run.jsonl` (evidence contract: checks, tool results, and content hashes)
 - `summary.md`
 
+Each run also appends the same actions to `$SWAG_HOME/actions.jsonl`, which
+`swag safety log` reads. `--evidence` is on by default; `--no-evidence` lets a
+step pass on the model's word and still writes the action index.
+
+`--record` writes a portable run bundle under the output directory
+(`--bundle` picks the path). `swag replay <bundle>` runs it again from the
+saved model responses, offline. `swag replay <bundle> --mode live` calls a
+model and compares. `swag bundle inspect` and `swag bundle export` are how
+you read a bundle and zip it for a bug report. The format is
+[docs/spec/run-bundle.md](docs/spec/run-bundle.md). Set `bundle.record = true`
+in config to record every run. Secrets are redacted before the bundle is
+written. The bundle copies `run.jsonl`, records undo tree hashes, and stores
+whether the plan fell back, whether `--strict-plan` was on, and the memory mode.
+
 Other useful flags: `--dry-run`, `--max-steps`, `--max-attempts`,
-`--concurrency`, `--model`, and `--engine` (`python` or `graphbit`).
+`--concurrency`, `--model`, `--evidence` / `--no-evidence`, and `--engine`
+(`python` or `graphbit`).
 GraphBit is optional (`pip install -e ".[graphbit]"`). The default scheduler
 is pure Python. If GraphBit is not installed, `--engine graphbit` falls back
 and says so.
@@ -149,7 +229,14 @@ Installed plugins live in `$SWAG_HOME/plugins/`. You can also point
 `plugin_dirs` in `config.toml` at a checkout you are editing.
 
 Authoring, marketplaces, and the skill format are in
-[docs/PLUGINS.md](docs/PLUGINS.md).
+[docs/PLUGINS.md](docs/PLUGINS.md). Signed gallery installs are in
+[docs/GALLERY.md](docs/GALLERY.md):
+
+```bash
+swag gallery search --index ./gallery.json
+swag gallery info my-plugin --index ./gallery.json
+swag gallery install my-plugin --index ./gallery.json
+```
 
 Approving an install, or passing `--yes`, writes the requested permissions
 into `$SWAG_HOME/grants.json`. Actions tagged with that plugin are allowed
@@ -167,6 +254,7 @@ swag safety grant example-github-helper filesystem.write
 | --- | --- |
 | `ask-always` | Every action, including reads |
 | `ask-risky` (default) | Anything that is not a pure read |
+| `ask-irreversible` | Only irreversible actions (the point of no return) |
 | `auto` | Never. Actions are still logged. A hard deny still applies |
 
 ```bash
@@ -179,6 +267,25 @@ The sandbox defaults to `local`: commands run in the task directory with a
 timeout, and file paths cannot escape it. `sandbox.mode` can be `off`,
 `local`, or `docker`. Docker runs a throwaway container with the network off
 unless you turn it on. Details are in [docs/SAFETY.md](docs/SAFETY.md).
+
+## Undo
+
+Swag Bot snapshots the task directory before each file write and each shell
+command, so `swag undo` can put those files back, including deletes done by
+the shell. `--to` names a step id and restores the workspace to the start of
+that step.
+
+```bash
+swag undo
+swag undo --to edit-files
+```
+
+Snapshots live in `$SWAG_HOME/undo`, outside the task directory. Network
+calls, sent mail, payments, and files outside the task directory are not in
+the snapshot. The undo report lists those irreversible actions instead of
+pretending they were reversed. Plugins can register an inverse in
+`plugin.json` under `compensations`. The limits are in
+[docs/SAFETY.md](docs/SAFETY.md).
 
 ## MCP
 
@@ -202,16 +309,90 @@ swag serve-mcp
 swag serve-mcp --http --port 8765
 ```
 
-The server offers `swag_run_task` (run a goal, return the summary) and
-`swag_list_skills` (name and description of discovered skills). Install the
-MCP extra first: `pip install "swag-bot[mcp]"`.
+The server offers `swag_run_task` (run a goal, return the summary),
+`swag_start_task` / `swag_task_status` / `swag_task_result` (the same run,
+polled), `swag_list_skills`, and `swag_setup_status`. Install the MCP extra
+first.
+
+Write and shell actions are not confirmed on the terminal. Stdio is the MCP
+channel, so a prompt there would break the session. A client that supports
+form elicitation gets one question per task. Otherwise the action is denied
+and the tool result says why, unless you preapproved it:
+
+```bash
+swag setup --grant write
+```
+
+Destructive actions stay denied until you grant that risk explicitly.
+`ask-risky` is still the default.
+
+Connect a client with one command or link (`swag install-mcp` prints these):
+
+```bash
+claude mcp add --transport stdio swag -- uvx --from 'swag-bot[mcp] @ git+https://github.com/vishnu-Swagan/swag-bot' swag-bot serve-mcp
+```
+
+Claude Code and Cowork can also install the plugin from this repo:
+
+```bash
+claude plugin marketplace add vishnu-Swagan/swag-bot
+claude plugin install swag-bot@swag-bot
+```
+
+- Cursor: `cursor://anysphere.cursor-deeplink/mcp/install?name=swag&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyItLWZyb20iLCJzd2FnLWJvdFttY3BdIEAgZ2l0K2h0dHBzOi8vZ2l0aHViLmNvbS92aXNobnUtU3dhZ2FuL3N3YWctYm90Iiwic3dhZy1ib3QiLCJzZXJ2ZS1tY3AiXX0%3D`
+- VS Code: `vscode:mcp/install?%7B%22name%22%3A%22swag%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22--from%22%2C%22swag-bot%5Bmcp%5D%20%40%20git%2Bhttps%3A%2F%2Fgithub.com%2Fvishnu-Swagan%2Fswag-bot%22%2C%22swag-bot%22%2C%22serve-mcp%22%5D%7D`
+- Gemini CLI: `gemini extensions install https://github.com/vishnu-Swagan/swag-bot`
+- Claude Desktop: pack `packaging/mcpb` with `npx @anthropic-ai/mcpb pack packaging/mcpb swag-bot.mcpb` and open the `.mcpb` file
+- ChatGPT cannot attach a local stdio server. There is no hosted relay in this repo
+
+The paste-this prompt for an AI chat is [docs/INSTALL_FOR_AGENTS.md](docs/INSTALL_FOR_AGENTS.md). A short index is [llms.txt](llms.txt).
+
+## Browser
+
+The browser plugin opens pages, reads them, clicks, types, fills forms,
+submits, takes screenshots, downloads files, and extracts text. It is a
+Cowork plugin: a skill plus an MCP server (`swag browser-mcp`) that drives
+headless Chromium through Playwright.
+
+```bash
+python -m pip install -e ".[browser]"
+python -m playwright install chromium
+swag plugin install ./plugins/browser
+swag run "Open https://example.com and tell me the heading"
+```
+
+`swag plugin install` shows the grants (`network`, `mcp`, `filesystem.write`)
+and asks before it copies the plugin. Reads of the open page stay read
+actions. Navigation, form submit, and downloads are network actions, so the
+default `ask-risky` autonomy prompts, and the prompt includes the URL. A
+click that would submit a form or open a new domain is refused until the
+agent calls `browser__submit` or `browser__navigate`.
+
+Chromium runs on the host, not inside the Docker sandbox. File and shell
+tools still use the sandbox. Details, including that trade-off, are in
+[plugins/browser/README.md](plugins/browser/README.md).
+
+## Chrome
+
+The side panel in `extension/` sends a task to Swag Bot on the same computer,
+streams the plan, and asks you to approve or deny actions. It can attach the
+current page, and, if you allow it, act in that tab. Chrome native messaging
+is the bridge. There is no listening port and no remote server.
+
+```bash
+cd extension && npm install && npm run build
+swag extension install
+```
+
+Quit Chrome completely, load `extension/dist` (or the Chrome Web Store build),
+and click the Swag Bot icon. After a store install, add the published id with
+`swag extension install --extension-id <id>`. Details are in
+[extension/README.md](extension/README.md).
 
 ## Roadmap
 
-- A browser-use plugin
 - Telegram and Slack front ends
 - A desktop app
-- A plugin gallery
 
 ## Development
 
