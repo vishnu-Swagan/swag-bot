@@ -216,7 +216,14 @@ Installed plugins live in `$SWAG_HOME/plugins/`. You can also point
 `plugin_dirs` in `config.toml` at a checkout you are editing.
 
 Authoring, marketplaces, and the skill format are in
-[docs/PLUGINS.md](docs/PLUGINS.md).
+[docs/PLUGINS.md](docs/PLUGINS.md). Signed gallery installs are in
+[docs/GALLERY.md](docs/GALLERY.md):
+
+```bash
+swag gallery search --index ./gallery.json
+swag gallery info my-plugin --index ./gallery.json
+swag gallery install my-plugin --index ./gallery.json
+```
 
 Approving an install, or passing `--yes`, writes the requested permissions
 into `$SWAG_HOME/grants.json`. Actions tagged with that plugin are allowed

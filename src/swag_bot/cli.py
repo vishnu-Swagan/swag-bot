@@ -33,6 +33,7 @@ from swag_bot.models.hints import configured_model_line
 from swag_bot.onboarding.cli import app as onboarding_app
 from swag_bot.plugins.cli import app as plugins_app
 from swag_bot.plugins.cli import skill_app
+from swag_bot.plugins.gallery_cli import app as gallery_app
 from swag_bot.plugins.installer import configure_grant_store
 from swag_bot.safety.cli import app as safety_app
 from swag_bot.safety.cli import undo_command
@@ -51,6 +52,7 @@ app.add_typer(core_app)
 app.add_typer(plugins_app, name="plugin")
 register_skill_commands(skill_app)
 app.add_typer(skill_app, name="skill")
+app.add_typer(gallery_app, name="gallery")
 app.add_typer(safety_app, name="safety")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(models_app, name="model")

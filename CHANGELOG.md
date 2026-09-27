@@ -25,7 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `swag serve-mcp` asks for write and shell approval with MCP elicitation. Clients that cannot show the form get a denial in the tool result, or a preapproved grant from `swag setup --grant`. The server does not read stdin or write prompts to stdout
 - MCP tools `swag_start_task`, `swag_task_status`, `swag_task_result`, and `swag_setup_status`
 - Run bundles. `swag run --record` writes a portable, redacted bundle (plan, model traffic, tool results, approvals, file diffs, evidence ledger, undo tree hashes, plan fallback, strict plan, and memory mode). `swag replay` re-executes it from the saved model responses, or live to compare. `swag bundle inspect` and `swag bundle export` share a run. Format: `docs/spec/run-bundle.md`.
-- Verification-gated skill learning. A successful run can be distilled into a Cowork-compatible `SKILL.md` and kept in `$SWAG_HOME/skill-candidates/` until evidence verification and a replay both pass. `swag skill learn|candidates|promote|reject|recheck`. Promoted skills land in `$SWAG_HOME/skills/` with provenance. Unverified runs are never activated.
+- Verification-gated skill learning. A successful run can be distilled into a Cowork-compatible `SKILL.md` and kept in `$SWAG_HOME/skill-candidates/` until evidence verification and a replay both pass. `swag skill learn|candidates|promote|reject|recheck`. Promoted skills land in `$SWAG_HOME/skills/` with provenance.   Unverified runs are never activated.
+- `swag gallery search`, `info`, and `install` for a static JSON gallery index. Install verifies a minisign signature and runs a local static scan before the existing permission prompt. Unsigned or tampered plugins are refused unless `--allow-unsigned` or `--allow-tampered` is passed, and that override is written to `$SWAG_HOME/gallery/audit.jsonl`.
+- `swag gallery keygen`, `sign`, and `bundle` so a publisher can sign a plugin with Swag Bot or with the `minisign` CLI. The index format is documented in `docs/GALLERY.md`.
 
 ## [0.1.0] - 2026-09-27
 
