@@ -13,6 +13,7 @@ Read `docs/ARCHITECTURE.md` before touching a shared file. `interfaces.py` chang
 - `Planner` asks the injected `LLMClient` for a `TaskPlan`. Success criteria are kept in the step instruction (`Success criteria: ...`).
 - `StepExecutor` runs one step. It calls tools on the `ToolRegistry`, asks `PermissionPolicy` and `ApprovalPrompter` before each call, and records an `ActionLogEntry`.
 - `Verifier` asks the model whether the observation meets the success criteria. A failed check is retried up to `max_attempts`. A verdict with `replan: true` asks the planner for replacement steps, still capped by `max_steps`.
+- Uncertainty escalation is off unless `escalation.enabled` or `swag run --escalate` is set. `uncertainty.py` scores a step from cheap signals. A high score asks a clarifying question (`escalation_prompt.py`) and stops if there is no answer. `jury.py` can block an irreversible action. Reversibility names match the undo ledger; `reversibility.py` is the stub used until that classifier is present. See `docs/ESCALATION.md`.
 - `PythonWorkflowEngine` runs independent steps with asyncio, up to a concurrency limit. It is the default.
 - `GraphBitWorkflowEngine` is optional (`pip install -e ".[graphbit]"`, Apache-2.0). It is detected at runtime. GraphBit validates the dependency graph. Step bodies still run here so permissions and the injected model stay in Swag Bot. If GraphBit is not installed, `--engine graphbit` falls back to Python.
 

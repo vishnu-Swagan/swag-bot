@@ -6,6 +6,7 @@ import re
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from swag_bot.core.escalation import EscalationController
 from swag_bot.core.prompts import EXECUTOR_SYSTEM
 from swag_bot.core.redact import redact, redact_known
 from swag_bot.interfaces import (
@@ -54,6 +55,7 @@ class StepExecutor:
         max_tool_rounds: int = 6,
         on_action: OnAction | None = None,
         on_tool: OnTool | None = None,
+        escalation: EscalationController | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -64,9 +66,18 @@ class StepExecutor:
         self.max_tool_rounds = max_tool_rounds
         self.on_action = on_action
         self.on_tool = on_tool
+        self.escalation = escalation
+        self._step: Step | None = None
 
     def execute(self, step: Step, *, attempt: int, feedback: str | None) -> StepResult:
         """Run ``step`` once. The caller verifies the returned observation."""
+        self._step = step
+        try:
+            return self._execute(step, attempt=attempt, feedback=feedback)
+        finally:
+            self._step = None
+
+    def _execute(self, step: Step, *, attempt: int, feedback: str | None) -> StepResult:
         tool_specs = list(self.tools.list_tools())
         messages: list[Message] = [
             Message.system(EXECUTOR_SYSTEM),
@@ -128,6 +139,12 @@ class StepExecutor:
         if classified is not action.risk:
             action = action.model_copy(update={"risk": classified})
 
+        blocked = self._jury_block(action)
+        if blocked is not None:
+            self._record(action, arguments, approved=False, approver="jury", outcome=blocked)
+            self._emit_tool(blocked)
+            return blocked
+
         decision = _policy_decision(self.policy, action)
         if decision == "deny":
             outcome = "denied"
@@ -179,6 +196,21 @@ class StepExecutor:
         )
         if self.on_action is not None:
             self.on_action(entry)
+
+    def _jury_block(self, action: ActionRequest) -> str | None:
+        """Refuse an irreversible action the jury rejected. None lets it continue.
+
+        Reversible and compensable actions, and runs with escalation off, return
+        None so the permission policy is unchanged.
+        """
+        escalation = self.escalation
+        step = self._step
+        if escalation is None or step is None:
+            return None
+        block = escalation.review_action(action, step=step)
+        if block is None:
+            return None
+        return block.reason
 
     def _emit_tool(self, text: str) -> None:
         if self.on_tool is not None and text:

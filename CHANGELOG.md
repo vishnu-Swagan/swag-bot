@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in uncertainty escalation (`escalation.enabled`, or `swag run --escalate`). An uncertain step asks a specific question and stops if you do not answer. Irreversible actions can require a small jury. A single local model is enough. See `docs/ESCALATION.md`.
+
 ## [0.1.0] - 2026-09-27
 
 First tagged release. This is the v0 agent: `swag run` plans a goal, carries
