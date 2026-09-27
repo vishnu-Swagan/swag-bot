@@ -22,6 +22,7 @@ from swag_bot.config import config_path, load_settings
 from swag_bot.core.cli import app as core_app
 from swag_bot.core.cli import mcp_skill_provider, mcp_task_runner
 from swag_bot.errors import ConfigError, SwagError
+from swag_bot.learning.cli import register_skill_commands
 from swag_bot.mcp.cli import app as mcp_app
 from swag_bot.mcp.cli import configure_server
 from swag_bot.mcp.cli import serve as mcp_serve
@@ -48,6 +49,7 @@ app = typer.Typer(
 
 app.add_typer(core_app)
 app.add_typer(plugins_app, name="plugin")
+register_skill_commands(skill_app)
 app.add_typer(skill_app, name="skill")
 app.add_typer(safety_app, name="safety")
 app.add_typer(mcp_app, name="mcp")
@@ -169,6 +171,8 @@ def doctor(
     table.add_row("sandbox.network", str(settings.sandbox.network).lower())
     table.add_row("undo.enabled", str(settings.undo.enabled).lower())
     table.add_row("undo.auto_rollback", str(settings.undo.auto_rollback).lower())
+    table.add_row("skill_learning.mode", settings.skill_learning.mode.value)
+    table.add_row("skill_learning.replay", settings.skill_learning.replay.value)
     for name in _SECRET_ENV_VARS:
         state = "set" if os.environ.get(name) else "unset"
         table.add_row(name, state)

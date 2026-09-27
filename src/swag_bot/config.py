@@ -58,11 +58,17 @@ Example ``config.toml``::
     [bundle]
     record = false
 
+    [skill_learning]
+    mode = "review"   # off | review | auto
+    replay = "same"   # same | varied
+
 Known ``model.provider`` values: ``ollama`` (default), ``litellm``,
 ``openai``, ``anthropic``. The string is open so a new provider does not
 require a schema change. ``memory.backend`` defaults to ``memory``, which
 is the SQLite file ``$SWAG_HOME/memory.db``. ``memory.mode`` is ``auto``,
 ``ask``, or ``off``. ``sandbox.mode`` is ``off``, ``local``, or ``docker``.
+``skill_learning.mode`` is ``off``, ``review`` (default), or ``auto``.
+``skill_learning.replay`` is ``same`` (default) or ``varied``.
 """
 
 from __future__ import annotations
@@ -308,6 +314,35 @@ class BundleSettings(BaseModel):
     record: bool = False
 
 
+class SkillLearningMode(StrEnum):
+    """When a finished run may become an active skill.
+
+    ``off`` does not distill. ``review`` (the default) writes a quarantined
+    candidate and waits for ``swag skill promote``. ``auto`` promotes only
+    when evidence verification and a replay both pass.
+    """
+
+    OFF = "off"
+    REVIEW = "review"
+    AUTO = "auto"
+
+
+class SkillReplayTask(StrEnum):
+    """Which task the promotion gate asks the replayer to run."""
+
+    SAME = "same"
+    VARIED = "varied"
+
+
+class SkillLearningSettings(BaseModel):
+    """Verification-gated skill learning. Both keys are optional in ``config.toml``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    mode: SkillLearningMode = SkillLearningMode.REVIEW
+    replay: SkillReplayTask = SkillReplayTask.SAME
+
+
 class Settings(BaseModel):
     """Top-level ``config.toml``. Unknown keys are ignored so new fields can land later."""
 
@@ -323,6 +358,7 @@ class Settings(BaseModel):
     taint: TaintSettings = Field(default_factory=TaintSettings)
     escalation: EscalationSettings = Field(default_factory=EscalationSettings)
     bundle: BundleSettings = Field(default_factory=BundleSettings)
+    skill_learning: SkillLearningSettings = Field(default_factory=SkillLearningSettings)
 
 
 def swag_home() -> Path:

@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `swag serve-mcp` asks for write and shell approval with MCP elicitation. Clients that cannot show the form get a denial in the tool result, or a preapproved grant from `swag setup --grant`. The server does not read stdin or write prompts to stdout
 - MCP tools `swag_start_task`, `swag_task_status`, `swag_task_result`, and `swag_setup_status`
 - Run bundles. `swag run --record` writes a portable, redacted bundle (plan, model traffic, tool results, approvals, file diffs, evidence ledger, undo tree hashes, plan fallback, strict plan, and memory mode). `swag replay` re-executes it from the saved model responses, or live to compare. `swag bundle inspect` and `swag bundle export` share a run. Format: `docs/spec/run-bundle.md`.
+- Verification-gated skill learning. A successful run can be distilled into a Cowork-compatible `SKILL.md` and kept in `$SWAG_HOME/skill-candidates/` until evidence verification and a replay both pass. `swag skill learn|candidates|promote|reject|recheck`. Promoted skills land in `$SWAG_HOME/skills/` with provenance. Unverified runs are never activated.
 
 ## [0.1.0] - 2026-09-27
 
