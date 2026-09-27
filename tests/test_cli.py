@@ -21,6 +21,7 @@ _HELP_COMMANDS = (
     "mcp",
     "model",
     "memory",
+    "extension",
 )
 
 

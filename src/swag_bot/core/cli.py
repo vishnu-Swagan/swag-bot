@@ -156,12 +156,21 @@ def execute_goal(
     on_event: Callable[[LoopEvent], None] | None = None,
     announce: Callable[[str], None] | None = None,
     settings: Settings | None = None,
+    prompter: ApprovalPrompter | None = None,
+    prepare_tools: Callable[[InMemoryToolRegistry], None] | None = None,
+    policy_wrapper: Callable[[PermissionPolicy], PermissionPolicy] | None = None,
+    context_prefix: str = "",
 ) -> GoalResult:
     """Run one goal with the configured model, sandbox, policy, tools, and memory.
 
     Recalls memories and selects plugin skills before planning. Saves the
     summary to memory after the run. MCP tools come from ``~/.swag/mcp.json``
     and from enabled plugins, on top of the built-in file and shell tools.
+
+    ``prompter``, ``prepare_tools``, ``policy_wrapper``, and ``context_prefix``
+    are optional hooks for another front end. The Chrome extension uses them
+    for side-panel approvals, tab tools, and untrusted page text. Omitting
+    them keeps the terminal behavior.
     """
     if not goal.strip():
         raise SwagError("goal must not be empty")
@@ -181,22 +190,29 @@ def execute_goal(
     destination.mkdir(parents=True, exist_ok=True)
     sandbox = _sandbox(active, destination)
     memory = _memory(active)
-    policy = _policy(active, destination)
-    prompter = _prompter(active)
+    active_policy = _policy(active, destination)
+    if policy_wrapper is not None:
+        active_policy = policy_wrapper(active_policy)
+    active_prompter = _prompter(active) if prompter is None else prompter
     plugins = _plugins(active)
 
     tools = InMemoryToolRegistry()
     register_builtin_tools(tools, sandbox)
-    mcp_client = _attach_mcp_tools(tools, active, policy, prompter, plugins)
+    mcp_client = _attach_mcp_tools(tools, active, active_policy, active_prompter, plugins)
+    if prepare_tools is not None:
+        prepare_tools(tools)
     context = _planner_context(goal, memory, plugins)
+    prefix = context_prefix.strip()
+    if prefix:
+        context = f"{prefix}\n\n{context}" if context else prefix
 
     try:
         loop = PlanDoVerifyLoop(
             llm=llm,
             sandbox=sandbox,
             memory=memory,
-            policy=policy,
-            prompter=prompter,
+            policy=active_policy,
+            prompter=active_prompter,
             tools=tools,
             model=active.model.model,
             max_steps=max_steps,

@@ -26,6 +26,7 @@ src/swag_bot/
   mcp/              MCP client and swag serve-mcp
   models/           LiteLLM / Ollama / bring-your-own-key clients
   memory/           pluggable MemoryStore
+  extension/        Chrome native messaging host (front end, not an owned package)
 tests/fakes.py      FakeLLMClient, FakeSandbox, InMemoryMemoryStore, AutoApprovePrompter
 ```
 
@@ -208,10 +209,15 @@ load `.env` by itself.
 | `swag safety log\|policy` | action log and autonomy rules |
 | `swag mcp list\|tools\|add\|remove` | MCP servers in `~/.swag/mcp.json` |
 | `swag serve-mcp` | stdio MCP server; `--http` for streamable HTTP. Runs tasks and lists skills |
+| `swag extension install\|status\|remove` | Chrome native messaging host for the side panel in `extension/` |
 | `swag model list\|test\|set` | Ollama by default, LiteLLM for bring-your-own-key providers |
 | `swag memory add\|search\|list\|forget` | SQLite by default |
 | `swag version` | prints `swag-bot` and the version |
 | `swag doctor` | prints config and optional-dep status |
+
+`swag extension` is a front end. It calls `execute_goal` and does not own
+`core`, `safety`, or `mcp`. The side panel lives in `extension/` and is not
+imported by the agent loop.
 
 Optional extras, not installed by CI: `.[models]` (litellm), `.[mcp]` (mcp),
 `.[sandbox]` (docker). `.[dev]` is pytest, ruff, and mypy.

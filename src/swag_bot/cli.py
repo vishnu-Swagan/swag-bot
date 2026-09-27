@@ -22,6 +22,7 @@ from swag_bot.config import config_path, load_settings
 from swag_bot.core.cli import app as core_app
 from swag_bot.core.cli import mcp_skill_provider, mcp_task_runner
 from swag_bot.errors import ConfigError
+from swag_bot.extension.cli import app as extension_app
 from swag_bot.mcp.cli import app as mcp_app
 from swag_bot.mcp.cli import configure_server
 from swag_bot.mcp.cli import serve as mcp_serve
@@ -49,6 +50,7 @@ app.add_typer(safety_app, name="safety")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(models_app, name="model")
 app.add_typer(memory_app, name="memory")
+app.add_typer(extension_app, name="extension")
 
 # Names only. doctor prints "set" or "unset" and never the value.
 _SECRET_ENV_VARS = (

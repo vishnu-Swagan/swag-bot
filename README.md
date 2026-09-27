@@ -206,6 +206,23 @@ The server offers `swag_run_task` (run a goal, return the summary) and
 `swag_list_skills` (name and description of discovered skills). Install the
 MCP extra first: `pip install "swag-bot[mcp]"`.
 
+## Chrome
+
+The side panel in `extension/` sends a task to Swag Bot on the same computer,
+streams the plan, and asks you to approve or deny actions. It can attach the
+current page, and, if you allow it, act in that tab. Chrome native messaging
+is the bridge. There is no listening port and no remote server.
+
+```bash
+cd extension && npm install && npm run build
+swag extension install
+```
+
+Quit Chrome completely, load `extension/dist` (or the Chrome Web Store build),
+and click the Swag Bot icon. After a store install, add the published id with
+`swag extension install --extension-id <id>`. Details are in
+[extension/README.md](extension/README.md).
+
 ## Roadmap
 
 - A browser-use plugin

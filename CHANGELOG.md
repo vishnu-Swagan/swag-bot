@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Chrome extension in `extension/` and `swag extension install`. The side panel sends a task to a local native messaging host, streams plan-do-verify progress, and approves or denies actions. Optional tab actions use the same `browser__*` tool names and risk levels as the headless browser plugin.
+
 ## [0.1.0] - 2026-09-27
 
 First tagged release. This is the v0 agent: `swag run` plans a goal, carries
