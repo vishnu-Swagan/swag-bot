@@ -71,14 +71,15 @@ def test_low_memory_does_not_offer_a_pull() -> None:
     decision = decide(
         _snapshot(ollama_models=[], mem_bytes=2 * 1024 * 1024 * 1024, google_api_key_set=True)
     )
-    assert decision.action == "stop"
+    assert decision.action == "offer"
     assert "6 GB" in decision.message
     assert "GEMINI_API_KEY" in decision.message
+    assert decision.model != RECOMMENDED_MODEL
 
 
 def test_missing_ollama_tells_the_user_where_to_install_it() -> None:
     decision = decide(_snapshot())
-    assert decision.action == "stop"
+    assert decision.action == "offer"
     assert "https://ollama.com/download" in decision.message
     assert "does not install" in decision.message
 

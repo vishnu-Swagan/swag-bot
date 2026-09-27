@@ -88,9 +88,18 @@ swag run "Summarize the files in this directory"
 
 `swag setup --auto` uses an API key it finds in the environment
 (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or
-`OPENROUTER_API_KEY`), or an Ollama model of at least 7B that is already
-installed. Otherwise it offers to pull `qwen2.5:7b` (about 4.7 GB) and waits
-for a yes. It does not install Ollama for you. A 3B model is not selected.
+`OPENROUTER_API_KEY`, and the free-plan names in
+[docs/MODELS.md](docs/MODELS.md)), an Ollama model of at least 7B, or another
+local OpenAI-compatible server that is already running (LM Studio, Jan,
+llama.cpp, llamafile, GPT4All). Otherwise it offers to pull `qwen2.5:7b`
+(about 4.7 GB) and waits for a yes, or, when nothing local is available,
+prints a free-cloud menu. It does not install Ollama or those apps for you.
+A 3B model is not selected when the size is visible in the model id.
+Point at any other OpenAI-compatible server with
+`swag setup --auto --base-url http://localhost:1234/v1`.
+Local servers keep prompts on this machine. A free cloud plan does not: it
+sends prompts to that provider and rate-limits them. The trade-off, the key
+pages, and the default model ids are in [docs/MODELS.md](docs/MODELS.md).
 
 The PyPI project is not published yet. Flip `PYPI_PUBLISHED` in
 `src/swag_bot/onboarding/distribution.py` (and the same flag in the two

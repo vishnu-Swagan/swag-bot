@@ -209,7 +209,7 @@ load `.env` by itself.
 | `swag safety log\|policy` | action log and autonomy rules |
 | `swag mcp list\|tools\|add\|remove` | MCP servers in `~/.swag/mcp.json` |
 | `swag serve-mcp` | stdio MCP server; `--http` for streamable HTTP. Runs tasks and lists skills. Approvals use MCP elicitation, not the terminal |
-| `swag setup --auto` | detect a key or Ollama and write `config.toml`. Asks before a model download |
+| `swag setup --auto` | detect a key, Ollama, or a local OpenAI-compatible server and write `config.toml`. Asks before a model download. Falls back to a free-cloud menu. See `docs/MODELS.md` |
 | `swag install-mcp` | print the install command or link for an MCP client |
 | `swag model list\|test\|set` | Ollama by default, LiteLLM for bring-your-own-key providers |
 | `swag memory add\|search\|list\|forget` | SQLite by default |

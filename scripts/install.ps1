@@ -78,6 +78,8 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
   }
 }
 
+Write-Output "Model choices (local and free cloud): https://github.com/vishnu-Swagan/swag-bot/blob/main/docs/MODELS.md"
+
 Invoke-Step @("uv", "tool", "install", $Spec)
 
 if ($AssumeYes) {

@@ -172,6 +172,9 @@ def execute_goal(
     if max_steps < 1 or max_attempts < 1 or concurrency < 1:
         raise SwagError("max-steps, max-attempts, and concurrency must be at least 1")
 
+    from swag_bot.onboarding.secrets import apply_saved_keys
+
+    apply_saved_keys()
     active = load_settings() if settings is None else settings
     if autonomy is not None:
         active = active.model_copy(update={"autonomy": autonomy})

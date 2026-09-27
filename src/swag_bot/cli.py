@@ -149,4 +149,7 @@ def doctor(
 
 def main() -> None:
     """Console-script entry point."""
+    from swag_bot.onboarding.secrets import apply_saved_keys
+
+    apply_saved_keys()
     app()

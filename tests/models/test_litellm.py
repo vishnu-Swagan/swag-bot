@@ -63,6 +63,34 @@ def test_passes_prefixed_model_and_key_without_storing_it(monkeypatch: pytest.Mo
     assert "sk-ant-test" not in repr(client)
 
 
+def test_local_openai_route_sends_a_placeholder_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    recorder = Recorder([_chat("ok")])
+    client = LiteLLMClient(
+        provider="litellm",
+        model="openai/qwen2.5-7b",
+        api_base="http://localhost:1234/v1",
+        completion_fn=recorder,
+    )
+    assert client.complete("hi") == "ok"
+    call = recorder.calls[0]
+    assert call["model"] == "openai/qwen2.5-7b"
+    assert call["api_base"] == "http://localhost:1234/v1"
+    assert call["api_key"] == "local"
+
+
+def test_litellm_cloud_prefix_does_not_invent_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    recorder = Recorder([_chat("ok")])
+    client = LiteLLMClient(
+        provider="litellm",
+        model="groq/llama-3.3-70b-versatile",
+        completion_fn=recorder,
+    )
+    assert client.complete("hi") == "ok"
+    assert "api_key" not in recorder.calls[0]
+
+
 def test_provider_prefixes() -> None:
     cases = {
         "openai": "openai/gpt-4o-mini",

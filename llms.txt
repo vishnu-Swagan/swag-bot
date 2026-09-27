@@ -9,7 +9,7 @@ Swag Bot is not on PyPI yet. Install from Git until `PYPI_PUBLISHED` in `src/swa
 - Checkout: `sh scripts/install.sh -- run "Summarize the files in this directory"`
 - uv, no clone: `uvx --from 'swag-bot[models] @ git+https://github.com/vishnu-Swagan/swag-bot' swag-bot run "Summarize the files in this directory"`
 - pipx: `pipx install "swag-bot[mcp,models] @ git+https://github.com/vishnu-Swagan/swag-bot"` then `swag setup --auto`
-- Setup asks before pulling `qwen2.5:7b` (about 4.7 GB). It does not install Ollama or any other system package. A 3B model is not used.
+- Setup asks before pulling `qwen2.5:7b` (about 4.7 GB). It does not install Ollama or any other system package. A 3B model is not used. Local servers and free cloud plans: `docs/MODELS.md`.
 - Readiness: `swag doctor --json` includes `"ready"` and never prints API keys.
 
 ## Connect from a chat

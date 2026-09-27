@@ -113,6 +113,8 @@ if ! command -v uv >/dev/null 2>&1; then
   fi
 fi
 
+say "Model choices (local and free cloud): https://github.com/vishnu-Swagan/swag-bot/blob/main/docs/MODELS.md"
+
 run_cmd uv tool install "$SPEC"
 export PATH="${HOME:-}/.local/bin:${PATH:-}"
 

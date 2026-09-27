@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - One command to install and run a task: `scripts/install.sh` (and `scripts/install.ps1`), plus `uvx` / pipx instructions that install from Git until `PYPI_PUBLISHED` is flipped
-- `swag setup --auto` detects a bring-your-own-key environment variable or a local Ollama model. It asks before pulling `qwen2.5:7b` (about 4.7 GB). A 3B-only install is not treated as ready
+- `swag setup --auto` detects a bring-your-own-key environment variable, a local Ollama model, or a running OpenAI-compatible server (LM Studio, Jan, llama.cpp / llamafile, GPT4All, or `--base-url`). It asks before pulling `qwen2.5:7b` (about 4.7 GB). A 3B-only install is not treated as ready. When nothing local is found it can store a free-plan key (Gemini, Groq, OpenRouter, Cerebras, Mistral) in a mode-0600 file. See `docs/MODELS.md`
 - `swag doctor --json` prints a readiness report with `ready` and does not include secret values
 - `swag install-mcp` prints the Claude Code command, the Cursor and VS Code install links, and the Gemini, Claude Desktop, and ChatGPT notes
 - Claude marketplace entry, Gemini CLI extension manifest, and a Claude Desktop MCPB bundle under `packaging/mcpb`

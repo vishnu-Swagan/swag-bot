@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import json
 import sys
 from typing import Annotated
@@ -37,11 +38,35 @@ def _progress(line: str) -> None:
     print(line, file=sys.stderr)
 
 
+def _choose(prompt: str) -> str:
+    """Read a menu choice. Never echoes a secret. Returns '' when there is no tty."""
+    try:
+        if sys.stdin.isatty():
+            return input(prompt)
+        with open("/dev/tty", encoding="utf-8") as tty:
+            sys.stderr.write(prompt)
+            sys.stderr.flush()
+            return tty.readline()
+    except (EOFError, OSError):
+        return ""
+
+
+def _read_secret(prompt: str) -> str:
+    """Read a key without echoing it. Returns '' when input is unavailable."""
+    try:
+        return getpass.getpass(prompt)
+    except (EOFError, OSError):
+        return ""
+
+
 @app.command("setup")
 def setup_command(
     auto: Annotated[
         bool,
-        typer.Option("--auto", help="Detect a key or Ollama and write config.toml."),
+        typer.Option(
+            "--auto",
+            help="Detect a key, Ollama, or a local server and write config.toml.",
+        ),
     ] = False,
     yes: Annotated[
         bool,
@@ -58,6 +83,13 @@ def setup_command(
     grant: Annotated[
         list[str] | None,
         typer.Option("--grant", help="Preapprove a risk or action kind for MCP sessions."),
+    ] = None,
+    base_url: Annotated[
+        str | None,
+        typer.Option(
+            "--base-url",
+            help="OpenAI-compatible server to use, for example http://localhost:1234/v1.",
+        ),
     ] = None,
 ) -> None:
     """Detect a model, or record an MCP preapproval.
@@ -82,9 +114,13 @@ def setup_command(
         result = setup_auto(
             assume_yes=yes,
             dry_run=dry_run,
-            interactive=not yes and not dry_run,
+            interactive=not yes and not dry_run and sys.stdin.isatty(),
             ask=_ask,
             progress=_progress,
+            base_url=base_url,
+            choose=_choose,
+            read_secret=_read_secret,
+            echo=typer.echo,
         )
     except (ConfigError, SwagError, OSError, ValueError) as exc:
         typer.echo(str(exc), err=True)

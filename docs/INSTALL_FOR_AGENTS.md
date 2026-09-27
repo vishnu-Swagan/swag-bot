@@ -24,8 +24,12 @@ Or:
 Setup uses ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or
 OPENROUTER_API_KEY when one is already exported. It never writes the key
 into config. Gemini's client reads GEMINI_API_KEY, not GOOGLE_API_KEY.
+It also uses an Ollama model of at least 7B, or a running local
+OpenAI-compatible server (LM Studio, Jan, llama.cpp, llamafile, GPT4All).
 If no key is set and Ollama is running without a 7B-class model, setup
 offers to pull qwen2.5:7b (about 4.7 GB). A 3B model is not good enough.
+If nothing local is available, it offers a free cloud plan. Those plans
+send prompts to the provider. Read docs/MODELS.md before picking one.
 If Ollama is missing, send me to https://ollama.com/download.
 
 Check readiness with `swag doctor --json`. Use the result only when "ready"

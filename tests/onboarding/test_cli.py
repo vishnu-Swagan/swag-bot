@@ -17,7 +17,7 @@ runner = CliRunner()
 def test_setup_dry_run_does_not_write_config(_isolated_swag_home: Path) -> None:
     result = runner.invoke(app, ["setup", "--auto", "--dry-run"])
     text = result.output
-    assert result.exit_code == 2, text
+    assert result.exit_code == 0, text
     assert "Dry run." in text
     assert "https://ollama.com/download" in text
     assert not (_isolated_swag_home / "config.toml").is_file()
@@ -36,7 +36,7 @@ def test_doctor_json_has_ready_and_hides_secrets(monkeypatch: pytest.MonkeyPatch
 
 def test_grant_dry_run_does_not_write(_isolated_swag_home: Path) -> None:
     result = runner.invoke(app, ["setup", "--grant", "write", "--dry-run"])
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 0, result.output
     assert "Would preapprove: write" in result.output
     assert not (_isolated_swag_home / "mcp-approvals.json").is_file()
 

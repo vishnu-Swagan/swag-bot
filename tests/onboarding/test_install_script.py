@@ -28,6 +28,7 @@ def test_dry_run_prints_uv_and_setup_without_running_them(tmp_path: Path) -> Non
     assert "uv tool install" in output
     assert "swag-bot[mcp,models] @ git+https://github.com/vishnu-Swagan/swag-bot" in output
     assert "swag setup --auto" in output
+    assert "docs/MODELS.md" in output
     assert "swag run hello" in output
     assert "API_KEY" not in output
     syntax = subprocess.run(

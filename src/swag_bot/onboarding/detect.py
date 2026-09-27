@@ -12,7 +12,10 @@ import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from swag_bot.onboarding.local_servers import LocalServerState
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -21,8 +24,8 @@ from urllib.request import Request, urlopen
 BYOK_CANDIDATES: tuple[tuple[str, str, str], ...] = (
     ("anthropic", "ANTHROPIC_API_KEY", "claude-3-5-sonnet-latest"),
     ("openai", "OPENAI_API_KEY", "gpt-4o-mini"),
-    ("gemini", "GEMINI_API_KEY", "gemini-2.0-flash"),
-    ("openrouter", "OPENROUTER_API_KEY", "openai/gpt-4o-mini"),
+    ("gemini", "GEMINI_API_KEY", "gemini-2.5-flash"),
+    ("openrouter", "OPENROUTER_API_KEY", "openrouter/free"),
 )
 
 # qwen2.5:7b is the default pull. A 3B model failed in the owner's testing.
@@ -35,7 +38,7 @@ MIN_PULL_RAM_BYTES = 6 * 1024 * 1024 * 1024
 DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
 PROBE_TIMEOUT_SECONDS = 0.4
 
-ActionName = Literal["configure", "pull", "stop"]
+ActionName = Literal["configure", "pull", "offer", "stop"]
 ProgressFn = Callable[[str], None]
 
 
@@ -48,6 +51,7 @@ class EnvironmentSnapshot:
     ollama_installed: bool
     ollama_models: list[str] | None
     mem_bytes: int | None
+    local_servers: tuple[LocalServerState, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -58,28 +62,44 @@ class Decision:
     provider: str
     model: str
     message: str
+    api_base: str | None = None
 
 
-def capture_environment(*, timeout: float = PROBE_TIMEOUT_SECONDS) -> EnvironmentSnapshot:
-    """Read the local machine. Network use is one short request to Ollama."""
-    keys = {env_var: _env_set(env_var) for _, env_var, _ in BYOK_CANDIDATES}
+def capture_environment(
+    *,
+    timeout: float = PROBE_TIMEOUT_SECONDS,
+    extra_base: str | None = None,
+) -> EnvironmentSnapshot:
+    """Read the local machine.
+
+    Probes Ollama and the known local OpenAI-compatible servers. Each probe
+    uses ``timeout``. A saved key file is applied first so an already stored
+    free-plan key counts as set. Key values are not returned.
+    """
+    from swag_bot.onboarding.secrets import apply_saved_keys
+
+    apply_saved_keys()
+    keys = {env_var: _env_set(env_var) for _, env_var, _ in _all_key_rows()}
+    from swag_bot.onboarding.local_servers import probe_local_servers
+
     return EnvironmentSnapshot(
         keys=keys,
         google_api_key_set=_env_set("GOOGLE_API_KEY"),
         ollama_installed=shutil.which("ollama") is not None,
         ollama_models=fetch_ollama_models(timeout=timeout),
         mem_bytes=read_mem_bytes(),
+        local_servers=tuple(probe_local_servers(timeout=timeout, extra_base=extra_base)),
     )
 
 
 def decide(snapshot: EnvironmentSnapshot) -> Decision:
-    """Pick BYOK, an installed 7B-class model, a pull, or a stop hint.
+    """Pick a key, a local server, an Ollama model, a pull, or a free-cloud menu.
 
-    Order matches the one-prompt design: a cloud key wins, then a suitable
-    local model, then a pull of ``qwen2.5:7b`` after the user agrees, then
-    an install hint. A 3B-only Ollama install is not treated as ready.
+    Order: an environment key, an Ollama model of at least 7B, another local
+    server, a pull of ``qwen2.5:7b`` when Ollama is up and memory allows, then
+    the free-cloud menu. A 3B-only install is not treated as ready.
     """
-    for provider, env_var, model in BYOK_CANDIDATES:
+    for provider, env_var, model in _all_key_rows():
         if snapshot.keys.get(env_var):
             return Decision(
                 action="configure",
@@ -97,54 +117,118 @@ def decide(snapshot: EnvironmentSnapshot) -> Decision:
             action="configure",
             provider="ollama",
             model=installed,
-            message=f"Using local Ollama model {installed}.",
+            message=f"Using local Ollama model {installed}. Prompts stay on this machine.",
         )
 
+    local = _local_choice(snapshot)
+    if local is not None:
+        return local
+
     if snapshot.ollama_models is not None:
-        if snapshot.mem_bytes is not None and snapshot.mem_bytes < MIN_PULL_RAM_BYTES:
+        if snapshot.mem_bytes is None or snapshot.mem_bytes >= MIN_PULL_RAM_BYTES:
+            listed = ", ".join(snapshot.ollama_models) if snapshot.ollama_models else "none"
             return Decision(
-                action="stop",
+                action="pull",
                 provider="ollama",
-                model="",
+                model=RECOMMENDED_MODEL,
                 message=(
-                    "Ollama is running but has no 7B-class model, and this machine "
-                    "has under 6 GB of RAM. A 3B model is not used: it failed in testing. "
-                    "Set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or "
-                    "OPENROUTER_API_KEY, or run on a machine with more memory."
+                    f"Ollama is running. Installed models: {listed}. "
+                    f"Swag Bot can pull {RECOMMENDED_MODEL} ({RECOMMENDED_SIZE_LABEL}). "
+                    "3B models are not selected."
                     + _google_hint(snapshot)
                 ),
             )
-        listed = ", ".join(snapshot.ollama_models) if snapshot.ollama_models else "none"
-        return Decision(
-            action="pull",
-            provider="ollama",
-            model=RECOMMENDED_MODEL,
-            message=(
-                f"Ollama is running. Installed models: {listed}. "
-                f"Swag Bot can pull {RECOMMENDED_MODEL} ({RECOMMENDED_SIZE_LABEL}). "
-                "3B models are not selected."
-                + _google_hint(snapshot)
-            ),
-        )
 
-    if not snapshot.ollama_installed:
-        hint = (
-            "Ollama is not on PATH and no API key is set. "
-            "Install Ollama from https://ollama.com/download (Linux: "
-            "curl -fsSL https://ollama.com/install.sh | sh), start it, and re-run "
-            "swag setup --auto. Swag Bot does not install system software itself."
-        )
-    else:
-        hint = (
-            "The ollama binary is on PATH but the daemon did not answer at "
-            f"{ollama_base_url()}. Start it with `ollama serve`, then re-run "
-            "swag setup --auto."
-        )
     return Decision(
-        action="stop",
-        provider="ollama",
+        action="offer",
+        provider="",
         model="",
-        message=hint + _google_hint(snapshot),
+        message=_offer_message(snapshot),
+    )
+
+
+def _all_key_rows() -> tuple[tuple[str, str, str], ...]:
+    """BYOK rows, then free-plan rows whose env var is not already listed."""
+    from swag_bot.onboarding.free_cloud import env_defaults
+
+    rows = list(BYOK_CANDIDATES)
+    seen = {env_var for _provider, env_var, _model in rows}
+    for provider, env_var, model in env_defaults():
+        if env_var not in seen:
+            rows.append((provider, env_var, model))
+            seen.add(env_var)
+    return tuple(rows)
+
+
+def _local_choice(snapshot: EnvironmentSnapshot) -> Decision | None:
+    from swag_bot.onboarding.local_servers import LocalServerState, first_usable_server
+    from swag_bot.onboarding.probe_hook import unknown_size_note
+
+    servers = [item for item in snapshot.local_servers if isinstance(item, LocalServerState)]
+    choice = first_usable_server(servers)
+    if choice is None:
+        return None
+    note = "" if choice.size_known else unknown_size_note(choice.model_id)
+    return Decision(
+        action="configure",
+        provider="litellm",
+        model=choice.litellm_model,
+        api_base=choice.base_url,
+        message=(
+            f"Using {choice.name} at {choice.base_url}, model {choice.litellm_model}, "
+            "through LiteLLM's OpenAI-compatible route. Prompts stay on this machine."
+            + note
+        ),
+    )
+
+
+def _offer_message(snapshot: EnvironmentSnapshot) -> str:
+    from swag_bot.onboarding.free_cloud import menu_text
+
+    parts: list[str] = []
+    low_ram = snapshot.mem_bytes is not None and snapshot.mem_bytes < MIN_PULL_RAM_BYTES
+    if snapshot.ollama_models is not None and low_ram:
+        parts.append(
+            "Ollama is running but has no 7B-class model, and this machine "
+            "has under 6 GB of RAM. A 3B model is not used: it failed in testing. "
+            "A download is not offered."
+        )
+    elif snapshot.ollama_installed and snapshot.ollama_models is None:
+        parts.append(
+            "The ollama binary is on PATH but the daemon did not answer at "
+            f"{ollama_base_url()}. Start it with `ollama serve` if you want Ollama."
+        )
+    elif not snapshot.ollama_installed:
+        parts.append(
+            "Ollama is not on PATH. Install it from https://ollama.com/download "
+            "(Linux: curl -fsSL https://ollama.com/install.sh | sh) if you want a "
+            "local model. Swag Bot does not install system software itself."
+        )
+    skipped = _undersized_note(snapshot)
+    if skipped:
+        parts.append(skipped)
+    parts.append(menu_text())
+    hint = _google_hint(snapshot).strip()
+    if hint:
+        parts.append(hint)
+    return "\n".join(parts)
+
+
+def _undersized_note(snapshot: EnvironmentSnapshot) -> str:
+    from swag_bot.onboarding.local_servers import LocalServerState, choose_local_model
+
+    names: list[str] = []
+    for item in snapshot.local_servers:
+        if not isinstance(item, LocalServerState):
+            continue
+        if item.model_ids and choose_local_model(item.model_ids) is None:
+            names.append(item.name)
+    if not names:
+        return ""
+    listed = ", ".join(names)
+    return (
+        f"{listed} answered, but every model id that states a size is under 7B. "
+        "Those models are not selected."
     )
 
 
