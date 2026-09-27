@@ -31,6 +31,7 @@ from swag_bot.interfaces import (
     TaskPlan,
     Tool,
     ToolRegistry,
+    UndoController,
 )
 from swag_bot.registry import InMemoryToolRegistry
 
@@ -98,6 +99,7 @@ class PlanDoVerifyLoop:
         engine: str = "python",
         graphbit_module: object | None = None,
         on_event: Callable[[LoopEvent], None] | None = None,
+        undo: UndoController | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
@@ -115,6 +117,7 @@ class PlanDoVerifyLoop:
         self.max_attempts = max_attempts
         self.concurrency = concurrency
         self.on_event = on_event
+        self.undo = undo
         if tools is None:
             tools = InMemoryToolRegistry()
         register_builtin_tools(tools, sandbox)
@@ -159,6 +162,8 @@ class PlanDoVerifyLoop:
         if dry_run:
             self.summary_text = summarize(self._llm, plan, {}, model=self.model, dry_run=True)
             return plan
+        if self.undo is not None:
+            self.undo.begin_run(plan.id, self.sandbox.workdir)
 
         executor = StepExecutor(
             llm=self._llm,
@@ -200,6 +205,8 @@ class PlanDoVerifyLoop:
             for attempt in range(1, self.max_attempts + 1):
                 step.status = StepStatus.DOING
                 self._emit_status(step)
+                if self.undo is not None:
+                    self.undo.begin_step(step.id)
                 result = executor.execute(step, attempt=attempt, feedback=feedback)
                 if result.observation:
                     self._emit(
@@ -224,7 +231,9 @@ class PlanDoVerifyLoop:
                 feedback = verdict.reason
                 if verdict.replan or attempt >= self.max_attempts:
                     self._fail(step, result, verdict.reason, replan=verdict.replan)
+                    self._rollback_step(step.id)
                     return
+                self._rollback_step(step.id)
         finally:
             self._local.step_id = None
 
@@ -286,9 +295,16 @@ class PlanDoVerifyLoop:
             # The step already passed. A memory outage should not undo that.
             return
 
+    def _rollback_step(self, step_id: str) -> None:
+        if self.undo is None or not self.undo.auto_rollback:
+            return
+        self.undo.rollback_step(step_id)
+
     def _record(self, entry: ActionLogEntry) -> None:
         with self._log_lock:
             self.action_log.append(entry)
+        if self.undo is not None and entry.approved:
+            self.undo.note_action(entry.action, outcome=entry.outcome)
 
     def _on_tool(self, text: str) -> None:
         step_id = getattr(self._local, "step_id", None)

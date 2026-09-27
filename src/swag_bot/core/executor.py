@@ -18,6 +18,7 @@ from swag_bot.interfaces import (
     MemoryStore,
     Message,
     PermissionPolicy,
+    Reversibility,
     RiskLevel,
     Step,
     StepResult,
@@ -114,6 +115,7 @@ class StepExecutor:
             risk=risk,
             target=_target(call.name, arguments),
             arguments=redact(arguments),
+            tool_name=call.name,
         )
         try:
             self.tools.get(call.name)
@@ -127,6 +129,7 @@ class StepExecutor:
             classified = RiskLevel.DESTRUCTIVE
         if classified is not action.risk:
             action = action.model_copy(update={"risk": classified})
+        action = _stamp_reversibility(self.policy, action)
 
         decision = _policy_decision(self.policy, action)
         if decision == "deny":
@@ -183,6 +186,23 @@ class StepExecutor:
     def _emit_tool(self, text: str) -> None:
         if self.on_tool is not None and text:
             self.on_tool(text)
+
+
+def _stamp_reversibility(policy: PermissionPolicy, action: ActionRequest) -> ActionRequest:
+    """Copy ``action`` with ``reversibility`` set when the policy can classify it.
+
+    Policies that do not implement ``reversibility`` leave the field unset.
+    The undo ledger classifies again at record time.
+    """
+    if action.reversibility is not None:
+        return action
+    method = getattr(policy, "reversibility", None)
+    if not callable(method):
+        return action
+    value = method(action)
+    if isinstance(value, Reversibility):
+        return action.model_copy(update={"reversibility": value})
+    return action
 
 
 def _policy_decision(policy: PermissionPolicy, action: ActionRequest) -> str:

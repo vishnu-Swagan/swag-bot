@@ -37,11 +37,14 @@ from swag_bot.interfaces import (
 from swag_bot.mcp import build_mcp_client
 from swag_bot.mcp.client import SwagMCPClient
 from swag_bot.mcp.config import load_mcp_servers
+from swag_bot.mcp.registry import compensation_annotation
 from swag_bot.memory import build_memory_store
 from swag_bot.models import build_llm_client
 from swag_bot.plugins import build_registry
 from swag_bot.registry import InMemoryToolRegistry
 from swag_bot.safety import build_permission_policy, build_prompter, build_sandbox
+from swag_bot.safety.compensation import CompensationRegistry
+from swag_bot.safety.undo import UndoLedger, UndoSandbox
 
 app = typer.Typer(help="Plan, do, and verify a multi-step task.")
 
@@ -184,10 +187,13 @@ def execute_goal(
     policy = _policy(active, destination)
     prompter = _prompter(active)
     plugins = _plugins(active)
+    sandbox, undo = _attach_undo(active, destination, sandbox, policy, plugins)
 
     tools = InMemoryToolRegistry()
     register_builtin_tools(tools, sandbox)
     mcp_client = _attach_mcp_tools(tools, active, policy, prompter, plugins)
+    if undo is not None:
+        _note_mcp_compensations(undo, tools)
     context = _planner_context(goal, memory, plugins)
 
     try:
@@ -203,6 +209,7 @@ def execute_goal(
             max_attempts=max_attempts,
             concurrency=concurrency,
             engine=engine,
+            undo=undo,
         )
     except (ValueError, SwagError):
         if mcp_client is not None:
@@ -247,6 +254,52 @@ def mcp_skill_provider() -> list[SkillMeta]:
         return list(build_registry(load_settings()).list_skills())
     except SwagError:
         return []
+
+
+def _attach_undo(
+    settings: Settings,
+    workdir: Path,
+    sandbox: Sandbox,
+    policy: PermissionPolicy,
+    plugins: PluginRegistry | None,
+) -> tuple[Sandbox, UndoLedger | None]:
+    """Wrap ``sandbox`` so writes and shell commands snapshot first.
+
+    Disabled with ``undo.enabled = false``. The default autonomy stays
+    ``ask-risky``; this only records restore points.
+    """
+    if not settings.undo.enabled:
+        return sandbox, None
+    registry = CompensationRegistry()
+    if plugins is not None:
+        try:
+            for plugin in plugins.list_plugins():
+                registry.load_entries(
+                    list(plugin.manifest.compensations),
+                    source=plugin.manifest.name,
+                )
+        except Exception as exc:
+            print(f"warning: compensations were not loaded: {exc}", file=sys.stderr)
+    bind = getattr(policy, "bind_compensations", None)
+    if callable(bind):
+        bind(registry)
+    ledger = UndoLedger.open(
+        workdir,
+        compensations=registry,
+        auto_rollback=settings.undo.auto_rollback,
+    )
+    return UndoSandbox(sandbox, ledger), ledger
+
+
+def _note_mcp_compensations(ledger: UndoLedger, tools: InMemoryToolRegistry) -> None:
+    for tool in tools.list_tools():
+        raw = compensation_annotation(tool)
+        if raw is None:
+            continue
+        entry = dict(raw)
+        if "tool" not in entry and "name" not in entry:
+            entry["tool"] = tool.name
+        ledger.compensations.load_entries([entry], source=tool.name)
 
 
 def _sandbox(settings: Settings, workdir: Path) -> Sandbox:

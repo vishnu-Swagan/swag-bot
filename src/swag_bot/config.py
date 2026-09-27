@@ -22,6 +22,10 @@ Example ``config.toml``::
     image = "python:3.12-slim"
     network = false
 
+    [undo]
+    enabled = true
+    auto_rollback = true
+
 Known ``model.provider`` values: ``ollama`` (default), ``litellm``,
 ``openai``, ``anthropic``. The string is open so a new provider does not
 require a schema change. ``memory.backend`` defaults to ``memory``
@@ -80,6 +84,20 @@ class SandboxSettings(BaseModel):
     network: bool = False
 
 
+class UndoSettings(BaseModel):
+    """Workspace snapshots taken before file writes and shell commands.
+
+    ``enabled`` defaults to true. ``auto_rollback`` restores a failed step's
+    workspace to the snapshot from the start of that step. Neither setting
+    changes the default autonomy, which stays ``ask-risky``.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = True
+    auto_rollback: bool = True
+
+
 class Settings(BaseModel):
     """Top-level ``config.toml``. Unknown keys are ignored so new fields can land later."""
 
@@ -90,6 +108,7 @@ class Settings(BaseModel):
     plugin_dirs: list[str] = Field(default_factory=list)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
+    undo: UndoSettings = Field(default_factory=UndoSettings)
 
 
 def swag_home() -> Path:

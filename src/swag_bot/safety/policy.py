@@ -15,10 +15,13 @@ from swag_bot.interfaces import (
     ActionRequest,
     AutonomyLevel,
     Permission,
+    Reversibility,
     RiskLevel,
     default_requires_approval,
     resolve_sandbox_path,
 )
+from swag_bot.safety.compensation import CompensationRegistry
+from swag_bot.safety.reversibility import classify_reversibility
 
 _KNOWN_PERMISSIONS = {item.value for item in Permission}
 
@@ -227,12 +230,14 @@ class DefaultPermissionPolicy:
         *,
         grants: Mapping[str, set[str] | Sequence[str]] | None = None,
         workdir: Path | None = None,
+        compensations: CompensationRegistry | None = None,
     ) -> None:
         self._autonomy = autonomy
         self._grants: dict[str, set[str]] = {
             name: set(values) for name, values in (grants or {}).items()
         }
         self._workdir = workdir
+        self._compensations = compensations
 
     @property
     def autonomy(self) -> AutonomyLevel:
@@ -258,14 +263,32 @@ class DefaultPermissionPolicy:
         if not current:
             self._grants.pop(plugin, None)
 
+    def bind_compensations(self, registry: CompensationRegistry) -> None:
+        """Use ``registry`` when deciding whether an external action has an inverse."""
+        self._compensations = registry
+
     def classify(self, action: ActionRequest) -> RiskLevel:
         """Risk used for the decision. Never lower than ``destructive``."""
         if action.risk is RiskLevel.DESTRUCTIVE:
             return RiskLevel.DESTRUCTIVE
         return _higher(action.risk, self._infer(action))
 
+    def reversibility(self, action: ActionRequest) -> Reversibility:
+        """Whether the undo ledger can restore ``action``.
+
+        ``ask-irreversible`` prompts only when this is ``irreversible``.
+        ``ask-risky`` does not use this to skip a prompt.
+        """
+        return classify_reversibility(
+            action,
+            compensations=self._compensations,
+            workdir=self._workdir,
+        )
+
     def requires_approval(self, action: ActionRequest) -> bool:
         """True when the user must be asked. May be true more often than the default."""
+        if self._autonomy is AutonomyLevel.ASK_IRREVERSIBLE:
+            return self.reversibility(action) is Reversibility.IRREVERSIBLE
         return default_requires_approval(self.autonomy, self.classify(action))
 
     def is_denied(self, action: ActionRequest) -> bool:

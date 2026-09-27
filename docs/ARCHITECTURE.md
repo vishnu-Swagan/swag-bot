@@ -137,7 +137,10 @@ bodies stay empty until the command is invoked.
 
 ### Safety
 
-`AutonomyLevel`: `ask-always`, `ask-risky`, `auto`.
+`AutonomyLevel`: `ask-always`, `ask-risky`, `ask-irreversible`, `auto`.
+`ask-irreversible` prompts only for `Reversibility.IRREVERSIBLE`. The default
+stays `ask-risky`. `UndoController` is the optional snapshot hook the loop
+calls around a run; `swag undo` restores those snapshots.
 
 `RiskLevel`: `read`, `write`, `execute`, `network`, `destructive`.
 

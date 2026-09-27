@@ -161,6 +161,7 @@ class SwagMCPClient:
                         name=public,
                         description=mcp_tool.description or "",
                         parameters=_parameters(mcp_tool),
+                        annotations=_tool_meta(mcp_tool),
                     )
                     tools.append(tool)
                     qualified[public] = (spec.name, mcp_tool.name)
@@ -279,6 +280,17 @@ def _run_sync(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         return await fn(*args, **kwargs)
 
     return anyio.run(_wrapper)
+
+
+def _tool_meta(mcp_tool: Any) -> dict[str, Any]:
+    """Copy MCP ``meta`` onto ``Tool.annotations``. Missing meta is an empty dict.
+
+    Servers that declare an inverse put ``swagCompensation`` in that map.
+    """
+    meta = getattr(mcp_tool, "meta", None)
+    if not isinstance(meta, dict):
+        return {}
+    return {str(key): value for key, value in meta.items()}
 
 
 def _parameters(mcp_tool: Any) -> dict[str, Any]:

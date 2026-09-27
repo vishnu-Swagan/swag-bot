@@ -31,6 +31,7 @@ from swag_bot.plugins.cli import app as plugins_app
 from swag_bot.plugins.cli import skill_app
 from swag_bot.plugins.installer import configure_grant_store
 from swag_bot.safety.cli import app as safety_app
+from swag_bot.safety.cli import undo_command
 from swag_bot.safety.grants import JsonGrantStore
 
 configure_server(runner=mcp_task_runner, skills_provider=mcp_skill_provider)
@@ -49,6 +50,7 @@ app.add_typer(safety_app, name="safety")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(models_app, name="model")
 app.add_typer(memory_app, name="memory")
+app.command("undo")(undo_command)
 
 # Names only. doctor prints "set" or "unset" and never the value.
 _SECRET_ENV_VARS = (
@@ -114,6 +116,8 @@ def doctor() -> None:
     table.add_row("sandbox.mode", settings.sandbox.mode.value)
     table.add_row("sandbox.image", settings.sandbox.image)
     table.add_row("sandbox.network", str(settings.sandbox.network).lower())
+    table.add_row("undo.enabled", str(settings.undo.enabled).lower())
+    table.add_row("undo.auto_rollback", str(settings.undo.auto_rollback).lower())
     for name in _SECRET_ENV_VARS:
         state = "set" if os.environ.get(name) else "unset"
         table.add_row(name, state)

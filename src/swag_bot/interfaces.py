@@ -116,11 +116,17 @@ class Message(BaseModel):
 
 
 class Tool(BaseModel):
-    """A tool the model may call. ``parameters`` is a JSON Schema object."""
+    """A tool the model may call. ``parameters`` is a JSON Schema object.
+
+    ``annotations`` is an open bag for tool metadata. Swag Bot reads
+    ``swagCompensation`` from it when an MCP tool declares an inverse.
+    Older tools that omit it still validate.
+    """
 
     name: str
     description: str = ""
     parameters: dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
+    annotations: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChatResponse(BaseModel):
@@ -431,6 +437,7 @@ class PluginManifest(BaseModel):
     experimental: ExperimentalComponents | None = None
     dependencies: list[PluginDependency] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
+    compensations: list[dict[str, Any]] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod
@@ -467,6 +474,15 @@ class PluginManifest(BaseModel):
         for item in value:
             if not isinstance(item, str) or not item or any(ch.isspace() for ch in item):
                 raise ValueError("permission names must be non-empty and contain no whitespace")
+        return value
+
+    @field_validator("compensations", mode="before")
+    @classmethod
+    def _compensations(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+            raise ValueError("compensations must be a list of objects")
         return value
 
     @classmethod
@@ -515,13 +531,20 @@ class AutonomyLevel(StrEnum):
     """How often the agent asks before acting.
 
     - ``ask-always``: prompt for every action, including reads.
-    - ``ask-risky``: prompt for anything that is not a pure read.
+    - ``ask-risky``: prompt for anything that is not a pure read. This is
+      the default.
+    - ``ask-irreversible``: prompt only at the point of no return
+      (``Reversibility.IRREVERSIBLE``). Reversible workspace edits, including
+      shell changes inside the snapshotted workdir, and compensable actions
+      proceed without a prompt. This is a separate mode. It does not weaken
+      ``ask-risky``.
     - ``auto``: do not prompt. Still log every action. A policy may still
       hard-deny; skipping the prompt is not the same as allowing everything.
     """
 
     ASK_ALWAYS = "ask-always"
     ASK_RISKY = "ask-risky"
+    ASK_IRREVERSIBLE = "ask-irreversible"
     AUTO = "auto"
 
 
@@ -540,6 +563,25 @@ class RiskLevel(StrEnum):
     EXECUTE = "execute"
     NETWORK = "network"
     DESTRUCTIVE = "destructive"
+
+
+class Reversibility(StrEnum):
+    """Whether an action can be rolled back after it runs.
+
+    Risk and reversibility are different. A shell ``rm`` inside the sandbox
+    workdir is destructive and still reversible, because a snapshot was taken
+    first. Sending email is irreversible even when the risk is only ``network``.
+
+    - ``reversible``: workspace files, including changes a shell command makes
+      inside the snapshotted workdir.
+    - ``compensable``: an external side effect with a registered inverse, such
+      as closing an issue the tool just created.
+    - ``irreversible``: a point of no return. Undo cannot restore it.
+    """
+
+    REVERSIBLE = "reversible"
+    COMPENSABLE = "compensable"
+    IRREVERSIBLE = "irreversible"
 
 
 class ActionKind(StrEnum):
@@ -565,20 +607,35 @@ class ActionRequest(BaseModel):
     risk: RiskLevel
     target: str | None = None
     arguments: dict[str, Any] = Field(default_factory=dict)
+    reversibility: Reversibility | None = None
+    tool_name: str | None = None
 
 
-def default_requires_approval(autonomy: AutonomyLevel, risk: RiskLevel) -> bool:
+def default_requires_approval(
+    autonomy: AutonomyLevel,
+    risk: RiskLevel,
+    *,
+    reversibility: Reversibility | None = None,
+) -> bool:
     """Whether ``autonomy`` should prompt before an action of ``risk``.
 
     ``ask-always`` prompts every time. ``ask-risky`` prompts unless the risk
-    is ``read``. ``auto`` never prompts. A ``PermissionPolicy`` may deny more
-    often than this (including a hard deny with no prompt). It must not prompt
-    less often than this for the configured autonomy level.
+    is ``read``. ``auto`` never prompts. ``ask-irreversible`` prompts only
+    when ``reversibility`` is ``irreversible``. When that argument is omitted,
+    the floor for ``ask-irreversible`` is no prompt: the policy that classified
+    the action asks at the point of no return, and it may still prompt more
+    often than this helper.
+
+    A ``PermissionPolicy`` may deny more often than this (including a hard
+    deny with no prompt). It must not prompt less often than this for the
+    configured autonomy level.
     """
     if autonomy is AutonomyLevel.ASK_ALWAYS:
         return True
     if autonomy is AutonomyLevel.AUTO:
         return False
+    if autonomy is AutonomyLevel.ASK_IRREVERSIBLE:
+        return reversibility is Reversibility.IRREVERSIBLE
     return risk is not RiskLevel.READ
 
 
@@ -700,6 +757,57 @@ class Sandbox(Protocol):
 
     def write_file(self, path: str, content: str) -> None:
         """Write file text, creating parent directories inside the workdir."""
+        ...
+
+
+class UndoResult(BaseModel):
+    """What an undo restored, and what it could not.
+
+    ``restored_to`` is ``run-start`` or a step id. ``irreversible`` lists
+    actions whose effects are still out in the world. ``compensations_skipped``
+    lists inverses that were declared but did not run.
+    """
+
+    run_id: str
+    workdir: str
+    restored_to: str
+    files_changed: int = 0
+    compensations_ran: list[str] = Field(default_factory=list)
+    compensations_skipped: list[str] = Field(default_factory=list)
+    irreversible: list[str] = Field(default_factory=list)
+
+
+@runtime_checkable
+class UndoController(Protocol):
+    """Workspace snapshots and compensating actions for one run.
+
+    The core loop calls this around steps. The implementation lives in
+    ``swag_bot.safety`` so the loop does not import that package.
+    """
+
+    @property
+    def auto_rollback(self) -> bool:
+        """When true, a failed step restores the snapshot from its start."""
+        ...
+
+    def begin_run(self, run_id: str, workdir: Path) -> None:
+        """Snapshot ``workdir`` before any step mutates it."""
+        ...
+
+    def begin_step(self, step_id: str) -> None:
+        """Remember the workspace at the start of ``step_id``."""
+        ...
+
+    def note_action(self, action: ActionRequest, *, outcome: str | None = None) -> None:
+        """Record an action so undo can compensate it or report that it cannot."""
+        ...
+
+    def rollback_step(self, step_id: str) -> UndoResult:
+        """Restore the snapshot from the start of ``step_id`` and compensate."""
+        ...
+
+    def rollback_run(self, *, to_step: str | None = None) -> UndoResult:
+        """Restore the run start, or the start of ``to_step`` when given."""
         ...
 
 
@@ -969,6 +1077,7 @@ __all__ = [
     "PluginDependency",
     "PluginManifest",
     "PluginRegistry",
+    "Reversibility",
     "RiskLevel",
     "Role",
     "Sandbox",
@@ -983,6 +1092,8 @@ __all__ = [
     "Tool",
     "ToolCall",
     "ToolRegistry",
+    "UndoController",
+    "UndoResult",
     "UserConfigOption",
     "default_requires_approval",
     "resolve_sandbox_path",
