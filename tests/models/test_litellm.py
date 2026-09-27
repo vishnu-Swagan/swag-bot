@@ -193,6 +193,31 @@ def test_partial_tool_argument_is_not_emitted_until_it_is_json() -> None:
     assert chunks[1].tool_call_deltas[0].arguments == {"a": 1}
 
 
+def test_response_format_is_forwarded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    schema = {
+        "type": "json_schema",
+        "json_schema": {"name": "task_plan", "schema": {"type": "object"}},
+    }
+    recorder = Recorder([_chat("{}")])
+    client = LiteLLMClient(provider="openai", model="gpt-4o-mini", completion_fn=recorder)
+    assert client.chat([Message.user("plan")], response_format=schema).message.content == "{}"
+    assert recorder.calls[0]["response_format"] == schema
+
+
+def test_rejected_response_format_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    recorder = Recorder([RuntimeError("response_format is not supported"), _chat("ok")])
+    client = LiteLLMClient(provider="openai", model="gpt-4o-mini", completion_fn=recorder)
+    text = client.chat(
+        [Message.user("plan")],
+        response_format={"type": "json_object"},
+    )
+    assert text.message.content == "ok"
+    assert "response_format" in recorder.calls[0]
+    assert "response_format" not in recorder.calls[1]
+
+
 def test_missing_litellm_package(monkeypatch: pytest.MonkeyPatch) -> None:
     real_import = __import__
 

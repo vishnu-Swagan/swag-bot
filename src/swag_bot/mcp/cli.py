@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -12,7 +12,7 @@ from rich.table import Table
 from swag_bot.config import load_settings
 from swag_bot.errors import ConfigError, SwagError
 from swag_bot.interfaces import MCPServerSpec
-from swag_bot.mcp.config import load_mcp_servers, save_mcp_servers
+from swag_bot.mcp.config import load_mcp_servers, mcp_config_path, save_mcp_servers
 from swag_bot.mcp.server import SkillProvider, TaskRunner
 
 app = typer.Typer(help="MCP client and server.", no_args_is_help=True)
@@ -34,8 +34,23 @@ def configure_server(
     _skill_provider = skills_provider
 
 
+def _rewrite_mcp_help(text: str) -> str:
+    """Show the MCP file for this process, not a hardcoded ``~/.swag`` path."""
+    return text.replace("~/.swag/mcp.json", str(mcp_config_path()))
+
+
+class _HomeAwareMcpCommand(typer.core.TyperCommand):
+    """Help text that follows ``SWAG_HOME`` at the moment help is shown."""
+
+    def __getattribute__(self, name: str) -> Any:
+        value = super().__getattribute__(name)
+        if name in {"help", "short_help"} and isinstance(value, str):
+            return _rewrite_mcp_help(value)
+        return value
+
+
 def _console() -> Console:
-    return Console(no_color=True, soft_wrap=True, width=120)
+    return Console(no_color=True, soft_wrap=True)
 
 
 def serve(
@@ -62,7 +77,7 @@ def serve(
     server.run("stdio")
 
 
-@app.command("list")
+@app.command("list", cls=_HomeAwareMcpCommand)
 def list_servers() -> None:
     """List MCP servers saved in ``~/.swag/mcp.json``."""
     console = _console()
@@ -125,7 +140,7 @@ def list_tools(
     console.print(table)
 
 
-@app.command("add")
+@app.command("add", cls=_HomeAwareMcpCommand)
 def add_server(
     name: Annotated[str, typer.Argument(help="Server name.")],
     command: Annotated[str | None, typer.Option("--command", help="Stdio executable.")] = None,
@@ -185,7 +200,7 @@ def add_server(
     console.print(f"saved {name} to {path}")
 
 
-@app.command("remove")
+@app.command("remove", cls=_HomeAwareMcpCommand)
 def remove_server(
     name: Annotated[str, typer.Argument(help="Server name.")],
 ) -> None:

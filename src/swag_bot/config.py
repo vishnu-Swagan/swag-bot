@@ -16,6 +16,7 @@ Example ``config.toml``::
 
     [memory]
     backend = "memory"
+    mode = "auto"
 
     [sandbox]
     mode = "local"
@@ -24,8 +25,9 @@ Example ``config.toml``::
 
 Known ``model.provider`` values: ``ollama`` (default), ``litellm``,
 ``openai``, ``anthropic``. The string is open so a new provider does not
-require a schema change. ``memory.backend`` defaults to ``memory``
-(process-local). ``sandbox.mode`` is ``off``, ``local``, or ``docker``.
+require a schema change. ``memory.backend`` defaults to ``memory``, which
+is the SQLite file ``$SWAG_HOME/memory.db``. ``memory.mode`` is ``auto``,
+``ask``, or ``off``. ``sandbox.mode`` is ``off``, ``local``, or ``docker``.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 import tomli_w
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from swag_bot.errors import ConfigError
 from swag_bot.interfaces import AutonomyLevel
@@ -62,12 +64,26 @@ class ModelSettings(BaseModel):
 
 
 class MemorySettings(BaseModel):
-    """``backend`` selects a ``MemoryStore``. ``path`` is for backends that use a file."""
+    """``backend`` selects a ``MemoryStore``. ``path`` is for backends that use a file.
+
+    ``mode`` controls reads and writes for a run: ``auto`` saves and says so,
+    ``ask`` prompts first, ``off`` does neither. The default backend name
+    ``memory`` stores rows in ``$SWAG_HOME/memory.db``.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     backend: str = "memory"
     path: str | None = None
+    mode: str = "auto"
+
+    @field_validator("mode")
+    @classmethod
+    def _mode(cls, value: str) -> str:
+        text = value.strip().lower()
+        if text not in {"ask", "auto", "off"}:
+            raise ValueError("memory.mode must be ask, auto, or off")
+        return text
 
 
 class SandboxSettings(BaseModel):

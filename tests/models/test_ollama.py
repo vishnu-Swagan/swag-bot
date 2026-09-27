@@ -222,9 +222,46 @@ def test_list_models_and_unreachable() -> None:
 
 def test_http_error_is_a_model_error() -> None:
     transport = ScriptedTransport()
-    transport.push(404, {"error": "model not found"})
-    with pytest.raises(ModelError, match="model not found"):
+    transport.push(404, {"error": "model 'llama3.2' not found"})
+    with pytest.raises(ModelError, match="ollama pull llama3.2") as caught:
         _client(transport).complete("hi")
+    assert "HTTP 404" in str(caught.value)
+    assert "not found" in str(caught.value)
+
+
+def test_chat_sends_ollama_json_schema_format() -> None:
+    transport = ScriptedTransport()
+    transport.push(
+        200,
+        {"model": "llama3.2", "message": {"role": "assistant", "content": "{}"}, "done": True},
+    )
+    schema = {
+        "type": "json_schema",
+        "json_schema": {"name": "task_plan", "schema": {"type": "object", "required": ["steps"]}},
+    }
+    _client(transport).chat([Message.user("plan")], response_format=schema)
+    body = transport.calls[0]["body"]
+    assert isinstance(body, dict)
+    assert body["format"]["type"] == "object"
+    assert body["format"]["required"] == ["steps"]
+
+
+def test_rejected_format_is_retried_without_schema() -> None:
+    transport = ScriptedTransport()
+    transport.push(400, {"error": "invalid format schema"})
+    transport.push(
+        200,
+        {"model": "llama3.2", "message": {"role": "assistant", "content": "{}"}, "done": True},
+    )
+    text = _client(transport).chat(
+        [Message.user("plan")],
+        response_format={"type": "json_object"},
+    )
+    assert text.message.content == "{}"
+    first = transport.calls[0]["body"]
+    second = transport.calls[1]["body"]
+    assert isinstance(first, dict) and first["format"] == "json"
+    assert isinstance(second, dict) and "format" not in second
 
 
 def test_error_text_redacts_secret_values(monkeypatch: pytest.MonkeyPatch) -> None:

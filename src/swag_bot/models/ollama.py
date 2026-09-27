@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 from swag_bot.interfaces import (
@@ -20,6 +20,7 @@ from swag_bot.interfaces import (
     Tool,
 )
 from swag_bot.models.errors import ModelError, ToolCallingUnsupported
+from swag_bot.models.hints import explain_ollama_http
 from swag_bot.models.http import HTTPTransport, UrllibTransport
 from swag_bot.models.keys import redact_secrets
 from swag_bot.models.tools import (
@@ -56,19 +57,40 @@ class OllamaClient:
         *,
         tools: Sequence[Tool] | None = None,
         model: str | None = None,
+        response_format: Mapping[str, Any] | None = None,
     ) -> ChatResponse:
-        """One non-streaming ``/api/chat`` turn. Falls back to JSON tool calls."""
+        """One non-streaming ``/api/chat`` turn. Falls back to JSON tool calls.
+
+        ``response_format`` is an OpenAI-style schema. Ollama receives it as
+        ``format``. A model that rejects the schema is asked once more without it.
+        """
         chosen = model or self.model
         if tools:
             try:
-                return self._chat_once(messages, tools=tools, model=chosen, native_tools=True)
+                return self._chat_once(
+                    messages,
+                    tools=tools,
+                    model=chosen,
+                    native_tools=True,
+                    response_format=response_format,
+                )
             except ToolCallingUnsupported:
                 instructed = _with_tool_instruction(messages, tools)
                 response = self._chat_once(
-                    instructed, tools=None, model=chosen, native_tools=False
+                    instructed,
+                    tools=None,
+                    model=chosen,
+                    native_tools=False,
+                    response_format=response_format,
                 )
                 return _overlay_text_tool_calls(response, tools)
-        return self._chat_once(messages, tools=None, model=chosen, native_tools=False)
+        return self._chat_once(
+            messages,
+            tools=None,
+            model=chosen,
+            native_tools=False,
+            response_format=response_format,
+        )
 
     def complete(self, prompt: str, *, model: str | None = None) -> str:
         """Single user prompt in, assistant text out."""
@@ -135,12 +157,15 @@ class OllamaClient:
         tools: Sequence[Tool] | None,
         model: str,
         native_tools: bool,
+        response_format: Mapping[str, Any] | None = None,
+        _allow_format_retry: bool = True,
     ) -> ChatResponse:
         payload = _chat_payload(
             messages,
             model=model,
             tools=tools if native_tools else None,
             stream=False,
+            response_format=response_format,
         )
         response = self._transport.request(
             "POST",
@@ -153,7 +178,20 @@ class OllamaClient:
             detail = redact_secrets(response.text())
             if native_tools and _tools_unsupported(response.status, detail):
                 raise ToolCallingUnsupported(detail)
-            raise ModelError(f"ollama HTTP {response.status}: {detail}")
+            if (
+                response_format is not None
+                and _allow_format_retry
+                and _format_rejected(response.status, detail)
+            ):
+                return self._chat_once(
+                    messages,
+                    tools=tools,
+                    model=model,
+                    native_tools=native_tools,
+                    response_format=None,
+                    _allow_format_retry=False,
+                )
+            raise ModelError(explain_ollama_http(response.status, detail, model))
         try:
             body = response.json()
         except json.JSONDecodeError as exc:
@@ -231,6 +269,7 @@ def _chat_payload(
     model: str,
     tools: Sequence[Tool] | None,
     stream: bool,
+    response_format: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model,
@@ -239,7 +278,36 @@ def _chat_payload(
     }
     if tools:
         payload["tools"] = tools_as_openai(tools)
+    formatted = _ollama_format(response_format)
+    if formatted is not None:
+        payload["format"] = formatted
     return payload
+
+
+def _ollama_format(response_format: Mapping[str, Any] | None) -> Any | None:
+    """Translate an OpenAI ``response_format`` into Ollama's ``format`` field."""
+    if not response_format:
+        return None
+    kind = response_format.get("type")
+    if kind == "json_object":
+        return "json"
+    if kind == "json_schema":
+        wrapper = response_format.get("json_schema")
+        if isinstance(wrapper, Mapping):
+            schema = wrapper.get("schema")
+            if isinstance(schema, Mapping):
+                return dict(schema)
+        return "json"
+    if kind == "object":
+        return dict(response_format)
+    return "json"
+
+
+def _format_rejected(status: int, detail: str) -> bool:
+    if status not in {400, 422}:
+        return False
+    text = detail.lower()
+    return any(token in text for token in ("format", "schema", "structured"))
 
 
 def _ollama_message(message: Message) -> dict[str, Any]:

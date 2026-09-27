@@ -8,6 +8,7 @@ from typing import Any
 
 from swag_bot.core.parsing import PlanParseError, extract_json
 from swag_bot.core.prompts import PLANNER_SYSTEM
+from swag_bot.core.structured_output import PLAN_RESPONSE_FORMAT, forward_chat
 from swag_bot.interfaces import LLMClient, Message, Step, TaskPlan
 
 _WS = re.compile(r"\s+")
@@ -23,15 +24,27 @@ class Planner:
         model: str | None = None,
         tool_names: Sequence[str] = (),
         context: str = "",
+        strict: bool = False,
     ) -> None:
         self.llm = llm
         self.model = model
         self.tool_names = list(tool_names)
         self.context = context
+        self.strict = strict
+        self.fell_back = False
+        self.fallback_reason = ""
 
     def create(self, goal: str, *, max_steps: int) -> TaskPlan:
-        """Return a plan for ``goal``. Fall back to one step if the model is unreadable."""
+        """Return a plan for ``goal``.
+
+        Two unreadable replies become one step titled from the goal. That
+        fallback is recorded on ``fell_back`` so the caller can say so.
+        ``strict`` raises ``PlanParseError`` instead of inventing the step.
+        """
+        self.fell_back = False
+        self.fallback_reason = ""
         feedback: str | None = None
+        last = "the model response was not JSON"
         for _ in range(2):
             try:
                 payload = self._ask(
@@ -39,12 +52,21 @@ class Planner:
                 )
                 steps = steps_from_payload(payload, limit=max_steps, existing_ids=set())
             except PlanParseError as exc:
-                feedback = str(exc)
+                last = str(exc)
+                feedback = last
                 continue
             if not steps:
-                feedback = "The plan had no steps."
+                last = "The plan had no steps."
+                feedback = last
                 continue
             return TaskPlan(goal=goal, steps=steps)
+        self.fell_back = True
+        self.fallback_reason = last
+        if self.strict:
+            raise PlanParseError(
+                "PLAN FALLBACK: the model did not return a readable plan after 2 attempts"
+                f" ({last}). Strict planning is on, so this run stops instead of inventing a step."
+            )
         return TaskPlan(goal=goal, steps=[fallback_step(goal)])
 
     def revise(
@@ -72,9 +94,11 @@ class Planner:
         return []
 
     def _ask(self, user: str) -> Any:
-        response = self.llm.chat(
+        response = forward_chat(
+            self.llm,
             [Message.system(PLANNER_SYSTEM), Message.user(user)],
             model=self.model,
+            response_format=PLAN_RESPONSE_FORMAT,
         )
         try:
             return extract_json(response.message.content or "")

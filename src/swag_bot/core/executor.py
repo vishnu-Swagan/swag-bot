@@ -6,6 +6,7 @@ import re
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from swag_bot.core.memory_journal import label_memory
 from swag_bot.core.prompts import EXECUTOR_SYSTEM
 from swag_bot.core.redact import redact, redact_known
 from swag_bot.interfaces import (
@@ -54,6 +55,7 @@ class StepExecutor:
         max_tool_rounds: int = 6,
         on_action: OnAction | None = None,
         on_tool: OnTool | None = None,
+        memory_mode: str = "auto",
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -64,13 +66,23 @@ class StepExecutor:
         self.max_tool_rounds = max_tool_rounds
         self.on_action = on_action
         self.on_tool = on_tool
+        self.memory_mode = memory_mode
 
-    def execute(self, step: Step, *, attempt: int, feedback: str | None) -> StepResult:
-        """Run ``step`` once. The caller verifies the returned observation."""
+    def execute(
+        self,
+        step: Step,
+        *,
+        attempt: int,
+        feedback: str | None,
+        handoff: str = "",
+    ) -> StepResult:
+        """Run ``step`` once. ``handoff`` is text from the steps this one depends on."""
         tool_specs = list(self.tools.list_tools())
         messages: list[Message] = [
             Message.system(EXECUTOR_SYSTEM),
-            Message.user(_user_prompt(step, attempt, feedback, self._memories(step))),
+            Message.user(
+                _user_prompt(step, attempt, feedback, self._memories(step), handoff)
+            ),
         ]
         observation = ""
         hit_limit = True
@@ -99,11 +111,13 @@ class StepExecutor:
         )
 
     def _memories(self, step: Step) -> Sequence[str]:
+        if self.memory_mode == "off":
+            return []
         try:
             hits = self.memory.search(step.title, limit=3)
         except Exception:
             return []
-        return [item.content for item in hits]
+        return [label_memory(item) for item in hits]
 
     def _invoke(self, call: ToolCall) -> str:
         arguments = dict(call.arguments)
@@ -235,13 +249,21 @@ def _summary(name: str, arguments: dict[str, Any]) -> str:
     return name
 
 
-def _user_prompt(step: Step, attempt: int, feedback: str | None, memories: Sequence[str]) -> str:
+def _user_prompt(
+    step: Step,
+    attempt: int,
+    feedback: str | None,
+    memories: Sequence[str],
+    handoff: str = "",
+) -> str:
     lines = [
         f"Step id: {step.id}",
         f"Title: {step.title}",
         f"Attempt: {attempt}",
         f"Instruction:\n{step.instruction or step.title}",
     ]
+    if handoff.strip():
+        lines.append(handoff.strip())
     if memories:
         lines.append("Related memory:")
         lines.extend(f"- {item}" for item in memories)

@@ -10,6 +10,7 @@ import typer
 from swag_bot.config import Settings, load_settings, save_settings
 from swag_bot.errors import ConfigError, SwagError
 from swag_bot.models.factory import KNOWN_PROVIDERS, get_llm_client, split_provider_model
+from swag_bot.models.hints import availability_line, model_matches
 from swag_bot.models.keys import key_status, redact_secrets
 from swag_bot.models.ollama import OllamaClient, resolve_ollama_base_url
 
@@ -40,6 +41,14 @@ def test_model(
     """Send one short prompt to the configured model."""
     try:
         settings = load_settings()
+        if settings.model.provider.strip().lower() == "ollama":
+            names = OllamaClient(
+                model=settings.model.model,
+                base_url=resolve_ollama_base_url(settings.model.api_base),
+            ).list_models(timeout=1.0)
+            if names is not None and not model_matches(settings.model.model, names):
+                _fail(availability_line(settings.model.model, names))
+                return
         client = get_llm_client(settings)
         text = client.complete(prompt)
     except (ConfigError, SwagError) as exc:
@@ -85,6 +94,8 @@ def render_provider_report(settings: Settings | None = None) -> str:
     else:
         local = "(none)"
     lines.append(f"  ollama      local  no key  endpoint {ollama_base}  models: {local}")
+    if loaded.model.provider.strip().lower() == "ollama":
+        lines.append(availability_line(loaded.model.model, names))
     for provider, env_var, present in key_status():
         state = "set" if present else "unset"
         lines.append(f"  {provider:<11} cloud  {env_var}={state}")

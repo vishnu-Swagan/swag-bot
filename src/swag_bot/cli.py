@@ -26,7 +26,9 @@ from swag_bot.mcp.cli import app as mcp_app
 from swag_bot.mcp.cli import configure_server
 from swag_bot.mcp.cli import serve as mcp_serve
 from swag_bot.memory.cli import app as memory_app
+from swag_bot.memory.status import describe_memory
 from swag_bot.models.cli import app as models_app
+from swag_bot.models.hints import configured_model_line
 from swag_bot.plugins.cli import app as plugins_app
 from swag_bot.plugins.cli import skill_app
 from swag_bot.plugins.installer import configure_grant_store
@@ -106,11 +108,16 @@ def doctor() -> None:
     table.add_row("model.provider", settings.model.provider)
     table.add_row("model.model", settings.model.model)
     table.add_row("model.api_base", settings.model.api_base or "(provider default)")
+    model_check = configured_model_line(settings)
+    if model_check:
+        table.add_row("model.check", model_check)
     table.add_row("autonomy", settings.autonomy.value)
     dirs = ", ".join(settings.plugin_dirs) if settings.plugin_dirs else "(none)"
     table.add_row("plugin_dirs", dirs)
-    table.add_row("memory.backend", settings.memory.backend)
-    table.add_row("memory.path", settings.memory.path or "(none)")
+    memory = describe_memory(settings)
+    table.add_row("memory.backend", memory.backend_label)
+    table.add_row("memory.path", memory.path_label)
+    table.add_row("memory.mode", memory.mode)
     table.add_row("sandbox.mode", settings.sandbox.mode.value)
     table.add_row("sandbox.image", settings.sandbox.image)
     table.add_row("sandbox.network", str(settings.sandbox.network).lower())

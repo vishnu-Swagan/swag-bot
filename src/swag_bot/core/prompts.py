@@ -53,4 +53,6 @@ SUMMARIZER_SYSTEM = f"""{SUMMARIZER_PREFIX}
 Write a short markdown summary of a finished task for the person who asked.
 Lead with whether the goal was met. Mention failed or skipped steps and why.
 Do not invent results that are not in the step record.
+Do not start with a heading named Summary. Do not repeat the step list.
+Do not wrap the answer in a code fence.
 """

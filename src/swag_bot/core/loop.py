@@ -7,12 +7,17 @@ plugins, mcp, or memory. ``swag run`` is the composition root.
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from swag_bot.core.engine import WorkflowEngine, build_engine
+from swag_bot.core.evidence_stub import EvidenceLookup, NoEvidence
 from swag_bot.core.executor import StepExecutor
+from swag_bot.core.handoff import StepManifest, changed_files, render_handoff, snapshot_text_files
+from swag_bot.core.memory_journal import commit_memory, normalize_memory_mode, provenance_metadata
 from swag_bot.core.planner import Planner
+from swag_bot.core.structured_output import forward_chat
 from swag_bot.core.summary import render_record, summarize
 from swag_bot.core.tools import register_builtin_tools
 from swag_bot.core.verifier import Verifier
@@ -41,8 +46,10 @@ _TERMINAL_NOTE = {StepStatus.FAILED, StepStatus.SKIPPED}
 class LoopEvent:
     """A progress signal for the CLI or a test.
 
-    ``kind`` is ``plan`` (the plan changed), ``status`` (a step changed),
-    ``output`` (an observation), or ``tool`` (a tool ran or was denied).
+    ``kind`` is ``plan`` (the plan changed), ``plan_fallback`` (the model
+    plan could not be parsed), ``status`` (a step changed), ``output`` (an
+    observation), ``tool`` (a tool ran or was denied), or ``memory`` (a
+    memory write was saved or declined).
     """
 
     kind: str
@@ -65,9 +72,16 @@ class _LockedLLM:
         *,
         tools: Sequence[Tool] | None = None,
         model: str | None = None,
+        response_format: Mapping[str, Any] | None = None,
     ) -> ChatResponse:
         with self._lock:
-            return self._inner.chat(messages, tools=tools, model=model)
+            return forward_chat(
+                self._inner,
+                messages,
+                tools=tools,
+                model=model,
+                response_format=response_format,
+            )
 
     def complete(self, prompt: str, *, model: str | None = None) -> str:
         with self._lock:
@@ -98,6 +112,9 @@ class PlanDoVerifyLoop:
         engine: str = "python",
         graphbit_module: object | None = None,
         on_event: Callable[[LoopEvent], None] | None = None,
+        strict_plan: bool = False,
+        memory_mode: str = "auto",
+        evidence: EvidenceLookup | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
@@ -115,6 +132,9 @@ class PlanDoVerifyLoop:
         self.max_attempts = max_attempts
         self.concurrency = concurrency
         self.on_event = on_event
+        self.strict_plan = strict_plan
+        self.memory_mode = normalize_memory_mode(memory_mode)
+        self.evidence: EvidenceLookup = evidence if evidence is not None else NoEvidence()
         if tools is None:
             tools = InMemoryToolRegistry()
         register_builtin_tools(tools, sandbox)
@@ -130,6 +150,8 @@ class PlanDoVerifyLoop:
         self._notes: dict[str, str] = {}
         self._replan_requests: list[tuple[Step, str]] = []
         self._replans = 0
+        self._manifests: dict[str, StepManifest] = {}
+        self._remembered: list[str] = []
         self._log_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._emit_lock = threading.Lock()
@@ -150,11 +172,23 @@ class PlanDoVerifyLoop:
         self._notes.clear()
         self._replans = 0
         self._plan = None
+        self._manifests.clear()
+        self._remembered.clear()
 
         names = [tool.name for tool in self.tools.list_tools()]
-        planner = Planner(self._llm, model=self.model, tool_names=names, context=context)
+        planner = Planner(
+            self._llm,
+            model=self.model,
+            tool_names=names,
+            context=context,
+            strict=self.strict_plan,
+        )
         plan = planner.create(goal, max_steps=self.max_steps)
         self._plan = plan
+        if planner.fell_back:
+            self._emit(
+                LoopEvent(kind="plan_fallback", plan=plan, text=planner.fallback_reason)
+            )
         self._emit(LoopEvent(kind="plan", plan=plan))
         if dry_run:
             self.summary_text = summarize(self._llm, plan, {}, model=self.model, dry_run=True)
@@ -169,6 +203,7 @@ class PlanDoVerifyLoop:
             model=self.model,
             on_action=self._record,
             on_tool=self._on_tool,
+            memory_mode=self.memory_mode,
         )
         verifier = Verifier(self._llm, model=self.model)
         while True:
@@ -188,6 +223,7 @@ class PlanDoVerifyLoop:
                 dict(self.results),
                 model=self.model,
                 dry_run=False,
+                remembered=list(self._remembered),
             )
         except Exception:
             self.summary_text = render_record(plan, dict(self.results))
@@ -196,11 +232,17 @@ class PlanDoVerifyLoop:
     def _execute_step(self, step: Step, executor: StepExecutor, verifier: Verifier) -> None:
         self._local.step_id = step.id
         feedback: str | None = None
+        before = snapshot_text_files(self.sandbox.workdir)
         try:
             for attempt in range(1, self.max_attempts + 1):
                 step.status = StepStatus.DOING
                 self._emit_status(step)
-                result = executor.execute(step, attempt=attempt, feedback=feedback)
+                result = executor.execute(
+                    step,
+                    attempt=attempt,
+                    feedback=feedback,
+                    handoff=self._handoff_for(step),
+                )
                 if result.observation:
                     self._emit(
                         LoopEvent(
@@ -218,6 +260,7 @@ class PlanDoVerifyLoop:
                     result.status = StepStatus.DONE
                     result.verified = True
                     self._store(result)
+                    self._publish_manifest(step, result, before)
                     self._remember(step, result)
                     self._emit_status(step)
                     return
@@ -276,15 +319,58 @@ class PlanDoVerifyLoop:
             )
         self._emit_status(step)
 
+    def _handoff_for(self, step: Step) -> str:
+        with self._state_lock:
+            manifests = [
+                self._manifests[dep] for dep in step.depends_on if dep in self._manifests
+            ]
+        return render_handoff(manifests)
+
+    def _publish_manifest(self, step: Step, result: StepResult, before: dict[str, str]) -> None:
+        after = snapshot_text_files(self.sandbox.workdir)
+        files = tuple(changed_files(before, after))
+        evidence = tuple(str(item) for item in self.evidence.ids_for_step(step.id))
+        manifest = StepManifest(
+            step_id=step.id,
+            title=step.title,
+            observation=result.observation,
+            files=files,
+            evidence_ids=evidence,
+        )
+        with self._state_lock:
+            self._manifests[step.id] = manifest
+
     def _remember(self, step: Step, result: StepResult) -> None:
-        try:
-            self.memory.add(
-                f"{step.title}: {result.observation}",
-                metadata={"step_id": step.id},
-            )
-        except Exception:
-            # The step already passed. A memory outage should not undo that.
+        if self.memory_mode == "off" or self._plan is None:
             return
+        with self._state_lock:
+            manifest = self._manifests.get(step.id)
+        evidence = manifest.evidence_ids if manifest is not None else ()
+        notice = commit_memory(
+            self.memory,
+            f"{step.title}: {result.observation}",
+            mode=self.memory_mode,
+            prompter=self.prompter,
+            metadata=provenance_metadata(
+                run_id=self._plan.id,
+                kind="step",
+                goal=self._plan.goal,
+                step_id=step.id,
+                evidence_ids=evidence,
+            ),
+        )
+        if notice is None:
+            return
+        if notice.saved:
+            self._remembered.append(notice.text)
+        self._emit(
+            LoopEvent(
+                kind="memory",
+                plan=self._require_plan(),
+                step_id=step.id,
+                text=notice.text,
+            )
+        )
 
     def _record(self, entry: ActionLogEntry) -> None:
         with self._log_lock:
