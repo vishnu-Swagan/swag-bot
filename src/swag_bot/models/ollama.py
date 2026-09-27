@@ -97,6 +97,28 @@ class OllamaClient:
         response = self.chat([Message.user(prompt)], model=model)
         return response.message.content or ""
 
+    def complete_structured(
+        self,
+        messages: Sequence[Message],
+        schema: Mapping[str, Any],
+        *,
+        model: str | None = None,
+    ) -> ChatResponse:
+        """One ``/api/chat`` turn with Ollama's JSON-schema ``format`` field.
+
+        The schema is the grammar. It is not an example the model can copy.
+        Tool calls are not combined with ``format``; planning and verification
+        use this method, and the executor uses ``chat`` with tools.
+        """
+        chosen = model or self.model
+        return self._chat_once(
+            messages,
+            tools=None,
+            model=chosen,
+            native_tools=False,
+            response_schema=schema,
+        )
+
     def stream(
         self,
         messages: Sequence[Message],
@@ -150,6 +172,38 @@ class OllamaClient:
                     names.append(name)
         return names
 
+    def show_model(
+        self,
+        name: str | None = None,
+        *,
+        timeout: float = 10.0,
+    ) -> dict[str, Any] | None:
+        """Return ``/api/show`` for ``name``, or None when the daemon is unreachable.
+
+        The capability probe reads ``model_info.*.context_length`` from this
+        payload. It does not generate tokens to guess the context window.
+        """
+        payload = {"name": name or self.model}
+        try:
+            response = self._transport.request(
+                "POST",
+                f"{self.base_url}/api/show",
+                _dump(payload),
+                _JSON_HEADERS,
+                timeout,
+            )
+        except ModelError:
+            return None
+        if response.status >= 400:
+            return None
+        try:
+            body = response.json()
+        except json.JSONDecodeError:
+            return None
+        if isinstance(body, dict):
+            return body
+        return None
+
     def _chat_once(
         self,
         messages: Sequence[Message],
@@ -158,6 +212,7 @@ class OllamaClient:
         model: str,
         native_tools: bool,
         response_format: Mapping[str, Any] | None = None,
+        response_schema: Mapping[str, Any] | None = None,
         _allow_format_retry: bool = True,
     ) -> ChatResponse:
         payload = _chat_payload(
@@ -166,6 +221,7 @@ class OllamaClient:
             tools=tools if native_tools else None,
             stream=False,
             response_format=response_format,
+            response_schema=response_schema,
         )
         response = self._transport.request(
             "POST",
@@ -270,6 +326,7 @@ def _chat_payload(
     tools: Sequence[Tool] | None,
     stream: bool,
     response_format: Mapping[str, Any] | None = None,
+    response_schema: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model,
@@ -281,6 +338,10 @@ def _chat_payload(
     formatted = _ollama_format(response_format)
     if formatted is not None:
         payload["format"] = formatted
+    elif response_schema is not None and not tools:
+        # Ollama accepts a JSON schema as ``format``. Skip it when tools are
+        # present: a tool call is not an instance of the plan or verdict schema.
+        payload["format"] = dict(response_schema)
     return payload
 
 

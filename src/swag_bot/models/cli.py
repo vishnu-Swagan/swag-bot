@@ -57,6 +57,39 @@ def test_model(
     typer.echo(text)
 
 
+@app.command("probe")
+def probe_model(
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Ignore the cached profile and probe again."),
+    ] = False,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Print the profile as JSON."),
+    ] = False,
+) -> None:
+    """Probe the configured model once and cache JSON, tool, and context scores."""
+    from swag_bot.harness.probe import profile_model, render_report
+
+    try:
+        settings = load_settings()
+        client = get_llm_client(settings)
+        report = profile_model(
+            client=client,
+            provider=settings.model.provider,
+            model=settings.model.model,
+            api_base=settings.model.api_base,
+            force=force,
+        )
+    except (ConfigError, SwagError) as exc:
+        _fail(redact_secrets(str(exc)))
+        return
+    if as_json:
+        typer.echo(report.model_dump_json(indent=2))
+        return
+    typer.echo(render_report(report))
+
+
 @app.command("set")
 def set_model(
     spec: Annotated[str, typer.Argument(help="provider/model, for example ollama/llama3.2.")],

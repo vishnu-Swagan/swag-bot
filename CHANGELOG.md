@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Autonomy `ask-irreversible`. Prompts only at the point of no return. The default remains `ask-risky`, which still prompts for writes and shell commands. Irreversible actions are marked in the approval prompt.
 - Taint firewall for tool output. Web pages, MCP results, plugin output, and files from outside the workspace are labeled untrusted. Those labels cannot by themselves drive network, destructive, credential, or send actions. `swag run --taint-mode escalate|block|off`. See `docs/TAINT.md`.
 - Opt-in uncertainty escalation (`escalation.enabled`, or `swag run --escalate`). An uncertain step asks a specific question and stops if you do not answer. Irreversible actions can require a small jury. A single local model is enough. The jury uses `safety.reversibility`. See `docs/ESCALATION.md`.
+- Small-model harness. `swag model probe` and `swag doctor --probe` profile the active model (JSON adherence, tool calls, context size) and cache the result. `swag run` adapts prompts, tool exposure, and plan checks to that profile, and can escalate a failing step to `model.fallback` inside `model.budget`. Ollama request timeouts rise above 120 seconds for local models unless `model.timeout` is set.
 
 ## [0.1.0] - 2026-09-27
 

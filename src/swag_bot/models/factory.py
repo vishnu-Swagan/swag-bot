@@ -17,20 +17,28 @@ LITELLM_PROVIDERS = frozenset({"openai", "anthropic", "gemini", "openrouter", "l
 KNOWN_PROVIDERS = frozenset({OLLAMA, *LITELLM_PROVIDERS})
 
 
-def get_llm_client(config: Settings | None = None) -> LLMClient:
+def get_llm_client(config: Settings | None = None, *, timeout: float | None = None) -> LLMClient:
     """Client for ``config.model``. Loads ``config.toml`` when ``config`` is omitted.
 
     ``ollama`` uses the native HTTP client. ``openai``, ``anthropic``,
     ``gemini``, ``openrouter``, and ``litellm`` use LiteLLM.
+
+    ``timeout`` overrides ``config.model.timeout``. When both are omitted the
+    client keeps its own default (120 seconds).
     """
     settings = load_settings() if config is None else config
     provider = settings.model.provider.strip().lower()
     model = settings.model.model
     api_base = settings.model.api_base
+    chosen = timeout if timeout is not None else settings.model.timeout
     if provider == OLLAMA:
-        return OllamaClient(model=model, base_url=api_base)
+        if chosen is None:
+            return OllamaClient(model=model, base_url=api_base)
+        return OllamaClient(model=model, base_url=api_base, timeout=chosen)
     if provider in LITELLM_PROVIDERS:
-        return LiteLLMClient(provider=provider, model=model, api_base=api_base)
+        if chosen is None:
+            return LiteLLMClient(provider=provider, model=model, api_base=api_base)
+        return LiteLLMClient(provider=provider, model=model, api_base=api_base, timeout=chosen)
     known = ", ".join(sorted(KNOWN_PROVIDERS))
     raise ConfigError(f"unknown model provider {provider!r}. Known providers: {known}")
 

@@ -49,6 +49,7 @@ _COMMANDS = (
     ["model", "--help"],
     ["model", "list"],
     ["model", "test", "--help"],
+    ["model", "probe", "--help"],
     ["model", "set", "--help"],
     ["memory", "--help"],
     ["memory", "add", "--help"],

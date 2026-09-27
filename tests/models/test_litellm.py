@@ -45,6 +45,21 @@ def test_is_streaming_and_hides_keys_from_repr(monkeypatch: pytest.MonkeyPatch) 
     assert "sk-test-openai" not in repr(client)
 
 
+def test_complete_structured_sends_json_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+    recorder = Recorder([_chat('{"ok": true}')])
+    client = LiteLLMClient(provider="openai", model="gpt-4o-mini", completion_fn=recorder)
+    schema = {"type": "object", "required": ["ok"]}
+    response = client.complete_structured([Message.user("probe")], schema)
+    assert response.message.content == '{"ok": true}'
+    call = recorder.calls[0]
+    assert call["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "swag_structured", "schema": schema},
+    }
+    assert "tools" not in call
+
+
 def test_passes_prefixed_model_and_key_without_storing_it(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     recorder = Recorder([_chat("ok")])
