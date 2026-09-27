@@ -47,4 +47,7 @@ def _panel(action: ActionRequest) -> Panel:
     plugin = action.arguments.get("plugin")
     if isinstance(plugin, str) and plugin:
         table.add_row("plugin", plugin)
+    permission = action.arguments.get("permission")
+    if isinstance(permission, str) and permission:
+        table.add_row("permission", permission)
     return Panel(table, title="Approval required", border_style="yellow")

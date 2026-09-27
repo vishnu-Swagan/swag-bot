@@ -55,6 +55,7 @@ _COMMANDS = (
     ["memory", "search", "--help"],
     ["memory", "list"],
     ["memory", "forget", "--help"],
+    ["browser-mcp", "--help"],
 )
 
 

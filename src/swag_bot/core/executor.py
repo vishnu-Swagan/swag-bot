@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from swag_bot.core.prompts import EXECUTOR_SYSTEM
-from swag_bot.core.redact import redact, redact_known
+from swag_bot.core.redact import redact, redact_known, redact_text
 from swag_bot.interfaces import (
     ActionKind,
     ActionLogEntry,
@@ -22,9 +22,13 @@ from swag_bot.interfaces import (
     Step,
     StepResult,
     StepStatus,
+    Tool,
     ToolCall,
     ToolRegistry,
 )
+
+_POLICY_KEYS = ("plugin", "permission", "risk_hint")
+_HINT_TARGETS = ("url", "path", "selector")
 
 _DESTRUCTIVE = re.compile(r"(?i)\b(rm|rmdir|unlink|shred|mkfs)\b")
 _NETWORK = re.compile(r"(?i)\b(curl|wget|ssh|scp|nc|ncat)\b|https?://")
@@ -107,17 +111,23 @@ class StepExecutor:
 
     def _invoke(self, call: ToolCall) -> str:
         arguments = dict(call.arguments)
-        risk = _initial_risk(call.name, arguments)
+        try:
+            spec: Tool | None = self.tools.get(call.name)
+        except KeyError:
+            spec = None
+        risk = _initial_risk(call.name, arguments, spec)
+        target = _target(call.name, arguments)
+        if target is None and spec is not None and (spec.risk_hint or spec.plugin):
+            target = _hint_target(arguments)
+        summary = redact_text(_summary(call.name, target))
         action = ActionRequest(
             kind=_KIND.get(call.name, ActionKind.TOOL.value),
-            summary=_summary(call.name, arguments),
+            summary=summary,
             risk=risk,
-            target=_target(call.name, arguments),
-            arguments=redact(arguments),
+            target=target,
+            arguments=redact(_policy_arguments(arguments, spec)),
         )
-        try:
-            self.tools.get(call.name)
-        except KeyError:
+        if spec is None:
             outcome = f"unknown tool: {call.name}"
             self._record(action, arguments, approved=False, approver="policy", outcome=outcome)
             return outcome
@@ -203,7 +213,7 @@ def _policy_decision(policy: PermissionPolicy, action: ActionRequest) -> str:
     return "allow"
 
 
-def _initial_risk(name: str, arguments: dict[str, Any]) -> RiskLevel:
+def _initial_risk(name: str, arguments: dict[str, Any], spec: Tool | None) -> RiskLevel:
     if name == "read_file":
         return RiskLevel.READ
     if name == "write_file":
@@ -215,7 +225,37 @@ def _initial_risk(name: str, arguments: dict[str, Any]) -> RiskLevel:
         if _NETWORK.search(command):
             return RiskLevel.NETWORK
         return RiskLevel.EXECUTE
+    if spec is not None and spec.risk_hint:
+        try:
+            return RiskLevel(spec.risk_hint)
+        except ValueError:
+            return RiskLevel.EXECUTE
     return RiskLevel.EXECUTE
+
+
+def _policy_arguments(arguments: dict[str, Any], spec: Tool | None) -> dict[str, Any]:
+    """Arguments stored on the action. Model-supplied policy keys are dropped."""
+    copied = {key: value for key, value in arguments.items() if key not in _POLICY_KEYS}
+    if spec is None:
+        return copied
+    if spec.plugin:
+        copied["plugin"] = spec.plugin
+    if spec.permission_hint:
+        copied["permission"] = spec.permission_hint
+    if spec.risk_hint:
+        copied["risk_hint"] = spec.risk_hint
+    return copied
+
+
+def _hint_target(arguments: dict[str, Any]) -> str | None:
+    for key in _HINT_TARGETS:
+        value = arguments.get(key)
+        if isinstance(value, str) and value.strip():
+            text = value.strip()
+            if len(text) > 180:
+                return text[:177] + "..."
+            return text
+    return None
 
 
 def _target(name: str, arguments: dict[str, Any]) -> str | None:
@@ -228,8 +268,7 @@ def _target(name: str, arguments: dict[str, Any]) -> str | None:
     return None
 
 
-def _summary(name: str, arguments: dict[str, Any]) -> str:
-    target = _target(name, arguments)
+def _summary(name: str, target: str | None) -> str:
     if target:
         return f"{name} {target}"
     return name

@@ -370,17 +370,24 @@ def _load_mcp_servers(root: Path, manifest: PluginManifest) -> list[MCPServerSpe
     raw = manifest.mcp_servers
     if raw is None:
         default = root / ".mcp.json"
-        if default.is_file():
-            return load_mcp_file(default)
-        return []
-    if isinstance(raw, str):
+        specs = load_mcp_file(default) if default.is_file() else []
+    elif isinstance(raw, str):
         path = _safe_component(root, raw)
         if not path.is_file():
             raise PluginError(f"mcpServers path does not exist: {raw}")
-        return load_mcp_file(path)
-    if isinstance(raw, dict):
-        return parse_mcp_map(raw)
-    raise PluginError("mcpServers must be a path or an object")
+        specs = load_mcp_file(path)
+    elif isinstance(raw, dict):
+        specs = parse_mcp_map(raw)
+    else:
+        raise PluginError("mcpServers must be a path or an object")
+    return [_with_plugin(spec, manifest.name) for spec in specs]
+
+
+def _with_plugin(spec: MCPServerSpec, plugin: str) -> MCPServerSpec:
+    """Remember which plugin declared this server. An explicit plugin is kept."""
+    if spec.plugin:
+        return spec
+    return spec.model_copy(update={"plugin": plugin})
 
 
 def _safe_component(root: Path, spec: str) -> Path:

@@ -26,6 +26,7 @@ src/swag_bot/
   mcp/              MCP client and swag serve-mcp
   models/           LiteLLM / Ollama / bring-your-own-key clients
   memory/           pluggable MemoryStore
+  browser/          headless browser tools for plugins/browser (Playwright optional)
 tests/fakes.py      FakeLLMClient, FakeSandbox, InMemoryMemoryStore, AutoApprovePrompter
 ```
 

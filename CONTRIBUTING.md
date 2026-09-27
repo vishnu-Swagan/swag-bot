@@ -29,13 +29,15 @@ pytest
 ```
 
 CI runs ruff, mypy, and pytest on Python 3.11 and 3.12. It does not install
-the optional `models`, `mcp`, `sandbox`, or `graphbit` extras. mypy is
-`strict` on the `swag_bot` package. The optional `mcp` and `anyio` imports
-use `ignore_missing_imports` because a base install does not provide them.
-Tests are not type-checked: two modules are both named `test_tools`.
+the optional `models`, `mcp`, `sandbox`, `graphbit`, or `browser` extras.
+mypy is `strict` on the `swag_bot` package. The optional `mcp`, `anyio`, and
+`playwright` imports use `ignore_missing_imports` because a base install does
+not provide them. Tests are not type-checked: two modules are both named
+`test_tools`.
 
 Docker sandbox tests skip themselves when the `docker` CLI is missing. MCP
-client tests skip themselves when the `mcp` extra is not installed.
+client tests skip themselves when the `mcp` extra is not installed. The
+browser integration test skips itself when Playwright or Chromium is missing.
 
 ## Layout
 

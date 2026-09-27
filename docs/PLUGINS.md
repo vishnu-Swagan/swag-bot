@@ -366,3 +366,10 @@ The same directory loads in both places when you follow the Claude layout.
 `plugins/example-github-helper/` is a complete sample: a manifest with
 `permissions`, one skill, one slash command, one sub-agent, and `.mcp.json`
 aimed at the official GitHub MCP server without a token in the file.
+
+`plugins/browser/` is the first-party browser plugin and the reference for a
+plugin whose MCP server is part of Swag Bot. `swag browser-mcp` drives
+headless Chromium. Install, grants, and the sandbox trade-off are in
+`plugins/browser/README.md`. The optional `browser` extra
+(`pip install 'swag-bot[browser]'`) installs Playwright. The core install
+does not.

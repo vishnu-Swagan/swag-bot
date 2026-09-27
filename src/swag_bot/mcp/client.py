@@ -90,6 +90,7 @@ class SwagMCPClient:
         self._closed = False
         self._tools: list[Tool] = []
         self._index: dict[str, tuple[str, str]] = {}
+        self._hinted: dict[str, Tool] = {}
 
     def list_tools(self) -> list[Tool]:
         """Tools from every configured server. Names are ``server__tool``."""
@@ -97,6 +98,7 @@ class SwagMCPClient:
         if not self._servers:
             self._tools = []
             self._index = {}
+            self._hinted = {}
             return []
         self._ensure_sdk()
         tools: list[Tool] = _run_sync(self._list_async)
@@ -123,16 +125,34 @@ class SwagMCPClient:
         except KeyError:
             raise KeyError(name) from None
         spec = self._by_name[server_name]
+        hinted = self._hinted.get(name)
+        action_arguments: dict[str, Any] = {
+            "server": server_name,
+            "tool": tool_name,
+            "arguments": _scrub(dict(arguments)),
+        }
+        risk = RiskLevel.EXECUTE
+        if hinted is not None:
+            if hinted.plugin:
+                action_arguments["plugin"] = hinted.plugin
+            if hinted.permission_hint:
+                action_arguments["permission"] = hinted.permission_hint
+            if hinted.risk_hint:
+                action_arguments["risk_hint"] = hinted.risk_hint
+                try:
+                    risk = RiskLevel(hinted.risk_hint)
+                except ValueError:
+                    risk = RiskLevel.EXECUTE
+        summary = f"Call MCP tool {name}"
+        url = arguments.get("url")
+        if isinstance(url, str) and url.strip():
+            summary = f"{summary} {url.strip()}"
         action = ActionRequest(
             kind=ActionKind.TOOL.value,
-            summary=f"Call MCP tool {name}",
-            risk=RiskLevel.EXECUTE,
+            summary=summary,
+            risk=risk,
             target=name,
-            arguments={
-                "server": server_name,
-                "tool": tool_name,
-                "arguments": _scrub(dict(arguments)),
-            },
+            arguments=action_arguments,
         )
         if authorized:
             self._reject_if_denied(action)
@@ -147,6 +167,7 @@ class SwagMCPClient:
         self._closed = True
         self._tools = []
         self._index = {}
+        self._hinted = {}
 
     async def _list_async(self) -> list[Tool]:
         tools: list[Tool] = []
@@ -157,10 +178,14 @@ class SwagMCPClient:
                 listed = await session.list_tools()
                 for mcp_tool in listed.tools:
                     public = f"{spec.name}__{mcp_tool.name}"
+                    hinted = _swag_hints(mcp_tool, plugin=spec.plugin)
                     tool = Tool(
                         name=public,
                         description=mcp_tool.description or "",
                         parameters=_parameters(mcp_tool),
+                        risk_hint=hinted[0],
+                        permission_hint=hinted[1],
+                        plugin=hinted[2],
                     )
                     tools.append(tool)
                     qualified[public] = (spec.name, mcp_tool.name)
@@ -170,6 +195,11 @@ class SwagMCPClient:
                 qualified[raw_name] = owners[0]
         self._tools = tools
         self._index = qualified
+        hinted_by_name = {tool.name: tool for tool in tools}
+        for raw_name, owners in raw_owners.items():
+            if len(owners) == 1:
+                hinted_by_name[raw_name] = hinted_by_name[f"{owners[0][0]}__{owners[0][1]}"]
+        self._hinted = hinted_by_name
         return list(tools)
 
     async def _call_async(
@@ -279,6 +309,42 @@ def _run_sync(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         return await fn(*args, **kwargs)
 
     return anyio.run(_wrapper)
+
+
+def _swag_hints(mcp_tool: Any, *, plugin: str | None) -> tuple[str | None, str | None, str | None]:
+    """``(risk, permission, plugin)`` from a tool's ``_meta.swag`` block.
+
+    Hints apply only when the server spec is tagged with a plugin. A server
+    from ``mcp.json`` cannot lower its own risk by advertising metadata.
+    """
+    if not plugin:
+        return None, None, None
+    meta = _mapping(getattr(mcp_tool, "meta", None))
+    if meta is None:
+        return None, None, None
+    swag = _mapping(meta.get("swag"))
+    if swag is None:
+        return None, None, None
+    risk = swag.get("risk")
+    permission = swag.get("permission")
+    risk_hint = risk.strip() if isinstance(risk, str) and risk.strip() else None
+    permission_hint = (
+        permission.strip() if isinstance(permission, str) and permission.strip() else None
+    )
+    if risk_hint is None and permission_hint is None:
+        return None, None, None
+    return risk_hint, permission_hint, plugin
+
+
+def _mapping(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    dump = getattr(value, "model_dump", None)
+    if callable(dump):
+        dumped = dump()
+        if isinstance(dumped, dict):
+            return dumped
+    return None
 
 
 def _parameters(mcp_tool: Any) -> dict[str, Any]:
