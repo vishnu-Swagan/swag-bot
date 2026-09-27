@@ -22,6 +22,9 @@ Example ``config.toml``::
     image = "python:3.12-slim"
     network = false
 
+    [bundle]
+    record = false
+
 Known ``model.provider`` values: ``ollama`` (default), ``litellm``,
 ``openai``, ``anthropic``. The string is open so a new provider does not
 require a schema change. ``memory.backend`` defaults to ``memory``
@@ -80,6 +83,14 @@ class SandboxSettings(BaseModel):
     network: bool = False
 
 
+class BundleSettings(BaseModel):
+    """Run bundles. ``record`` saves a portable bundle for every ``swag run``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    record: bool = False
+
+
 class Settings(BaseModel):
     """Top-level ``config.toml``. Unknown keys are ignored so new fields can land later."""
 
@@ -90,6 +101,7 @@ class Settings(BaseModel):
     plugin_dirs: list[str] = Field(default_factory=list)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
+    bundle: BundleSettings = Field(default_factory=BundleSettings)
 
 
 def swag_home() -> Path:

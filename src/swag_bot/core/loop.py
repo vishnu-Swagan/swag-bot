@@ -10,6 +10,7 @@ import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from swag_bot.core.bundle.context import current_attempt, current_step_id
 from swag_bot.core.engine import WorkflowEngine, build_engine
 from swag_bot.core.executor import StepExecutor
 from swag_bot.core.planner import Planner
@@ -41,8 +42,10 @@ _TERMINAL_NOTE = {StepStatus.FAILED, StepStatus.SKIPPED}
 class LoopEvent:
     """A progress signal for the CLI or a test.
 
-    ``kind`` is ``plan`` (the plan changed), ``status`` (a step changed),
-    ``output`` (an observation), or ``tool`` (a tool ran or was denied).
+    ``kind`` is ``plan`` (the plan changed), ``plan_fallback`` (the model
+    plan could not be parsed), ``status`` (a step changed), ``output`` (an
+    observation), or ``tool`` (a tool ran or was denied). A later change may
+    also emit ``memory``.
     """
 
     kind: str
@@ -155,6 +158,10 @@ class PlanDoVerifyLoop:
         planner = Planner(self._llm, model=self.model, tool_names=names, context=context)
         plan = planner.create(goal, max_steps=self.max_steps)
         self._plan = plan
+        if planner.fell_back:
+            self._emit(
+                LoopEvent(kind="plan_fallback", plan=plan, text=planner.fallback_reason)
+            )
         self._emit(LoopEvent(kind="plan", plan=plan))
         if dry_run:
             self.summary_text = summarize(self._llm, plan, {}, model=self.model, dry_run=True)
@@ -196,36 +203,42 @@ class PlanDoVerifyLoop:
     def _execute_step(self, step: Step, executor: StepExecutor, verifier: Verifier) -> None:
         self._local.step_id = step.id
         feedback: str | None = None
+        step_token = current_step_id.set(step.id)
         try:
             for attempt in range(1, self.max_attempts + 1):
-                step.status = StepStatus.DOING
-                self._emit_status(step)
-                result = executor.execute(step, attempt=attempt, feedback=feedback)
-                if result.observation:
-                    self._emit(
-                        LoopEvent(
-                            kind="output",
-                            plan=self._require_plan(),
-                            step_id=step.id,
-                            text=result.observation,
-                        )
-                    )
-                step.status = StepStatus.VERIFYING
-                self._emit_status(step)
-                verdict = verifier.check(step, result)
-                if verdict.passed:
-                    step.status = StepStatus.DONE
-                    result.status = StepStatus.DONE
-                    result.verified = True
-                    self._store(result)
-                    self._remember(step, result)
+                attempt_token = current_attempt.set(attempt)
+                try:
+                    step.status = StepStatus.DOING
                     self._emit_status(step)
-                    return
-                feedback = verdict.reason
-                if verdict.replan or attempt >= self.max_attempts:
-                    self._fail(step, result, verdict.reason, replan=verdict.replan)
-                    return
+                    result = executor.execute(step, attempt=attempt, feedback=feedback)
+                    if result.observation:
+                        self._emit(
+                            LoopEvent(
+                                kind="output",
+                                plan=self._require_plan(),
+                                step_id=step.id,
+                                text=result.observation,
+                            )
+                        )
+                    step.status = StepStatus.VERIFYING
+                    self._emit_status(step)
+                    verdict = verifier.check(step, result)
+                    if verdict.passed:
+                        step.status = StepStatus.DONE
+                        result.status = StepStatus.DONE
+                        result.verified = True
+                        self._store(result)
+                        self._remember(step, result)
+                        self._emit_status(step)
+                        return
+                    feedback = verdict.reason
+                    if verdict.replan or attempt >= self.max_attempts:
+                        self._fail(step, result, verdict.reason, replan=verdict.replan)
+                        return
+                finally:
+                    current_attempt.reset(attempt_token)
         finally:
+            current_step_id.reset(step_token)
             self._local.step_id = None
 
     def _fail(self, step: Step, result: StepResult, reason: str, *, replan: bool) -> None:

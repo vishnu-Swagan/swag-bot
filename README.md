@@ -119,6 +119,15 @@ The output directory receives:
 - `action-log.jsonl`
 - `summary.md`
 
+`--record` writes a portable run bundle under the output directory
+(`--bundle` picks the path). `swag replay <bundle>` runs it again from the
+saved model responses, offline. `swag replay <bundle> --mode live` calls a
+model and compares. `swag bundle inspect` and `swag bundle export` are how
+you read a bundle and zip it for a bug report. The format is
+[docs/spec/run-bundle.md](docs/spec/run-bundle.md). Set `bundle.record = true`
+in config to record every run. Secrets are redacted before the bundle is
+written.
+
 Other useful flags: `--dry-run`, `--max-steps`, `--max-attempts`,
 `--concurrency`, `--model`, and `--engine` (`python` or `graphbit`).
 GraphBit is optional (`pip install -e ".[graphbit]"`). The default scheduler

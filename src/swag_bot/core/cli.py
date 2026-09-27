@@ -17,6 +17,8 @@ import typer
 
 from swag_bot.config import Settings, load_settings
 from swag_bot.core.artifacts import default_output_dir, write_run_artifacts
+from swag_bot.core.bundle.cli import bundle_app, replay_command
+from swag_bot.core.bundle.record import RunRecorder
 from swag_bot.core.display import TaskListView, display_status
 from swag_bot.core.fallbacks import FallbackMemory, FallbackPolicy, FallbackPrompter
 from swag_bot.core.fallbacks import LocalSandbox as FallbackSandbox
@@ -26,6 +28,7 @@ from swag_bot.errors import NotImplementedYet, SwagError
 from swag_bot.interfaces import (
     ApprovalPrompter,
     AutonomyLevel,
+    LLMClient,
     MCPServerSpec,
     MemoryStore,
     PermissionPolicy,
@@ -33,6 +36,7 @@ from swag_bot.interfaces import (
     Sandbox,
     SkillMeta,
     StepStatus,
+    ToolRegistry,
 )
 from swag_bot.mcp import build_mcp_client
 from swag_bot.mcp.client import SwagMCPClient
@@ -44,6 +48,8 @@ from swag_bot.registry import InMemoryToolRegistry
 from swag_bot.safety import build_permission_policy, build_prompter, build_sandbox
 
 app = typer.Typer(help="Plan, do, and verify a multi-step task.")
+app.command("replay")(replay_command)
+app.add_typer(bundle_app, name="bundle")
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,7 @@ class GoalResult:
     output_dir: Path
     exit_code: int
     engine_note: str
+    bundle_dir: Path | None = None
 
 
 @app.command("run")
@@ -88,6 +95,14 @@ def run(
         str,
         typer.Option(help="Workflow engine: python (default), graphbit, or auto."),
     ] = "python",
+    record: Annotated[
+        bool,
+        typer.Option("--record", help="Write a portable run bundle under the output directory."),
+    ] = False,
+    bundle: Annotated[
+        Path | None,
+        typer.Option("--bundle", help="Directory for the run bundle. Implies --record."),
+    ] = None,
 ) -> None:
     """Plan, do, and verify a multi-step task."""
     if not goal.strip():
@@ -131,6 +146,8 @@ def run(
                 engine=engine,
                 on_event=on_event,
                 announce=typer.echo,
+                record=record,
+                bundle_dir=bundle,
             )
     except (ValueError, SwagError) as exc:
         typer.echo(str(exc), err=True)
@@ -138,6 +155,8 @@ def run(
 
     typer.echo(result.summary.rstrip())
     typer.echo(f"Output: {result.output_dir}")
+    if result.bundle_dir is not None:
+        typer.echo(f"Bundle: {result.bundle_dir}")
     if result.exit_code:
         raise typer.Exit(code=result.exit_code)
 
@@ -156,12 +175,18 @@ def execute_goal(
     on_event: Callable[[LoopEvent], None] | None = None,
     announce: Callable[[str], None] | None = None,
     settings: Settings | None = None,
+    record: bool = False,
+    bundle_dir: Path | None = None,
+    client: LLMClient | None = None,
 ) -> GoalResult:
     """Run one goal with the configured model, sandbox, policy, tools, and memory.
 
     Recalls memories and selects plugin skills before planning. Saves the
     summary to memory after the run. MCP tools come from ``~/.swag/mcp.json``
     and from enabled plugins, on top of the built-in file and shell tools.
+
+    ``record`` or ``bundle.record`` in config writes a run bundle. ``client``
+    replaces the configured model; tests and replay use that.
     """
     if not goal.strip():
         raise SwagError("goal must not be empty")
@@ -176,7 +201,7 @@ def execute_goal(
             update={"model": active.model.model_copy(update={"model": model})}
         )
 
-    llm = build_llm_client(active)
+    llm = client if client is not None else build_llm_client(active)
     destination = output_dir if output_dir is not None else default_output_dir()
     destination.mkdir(parents=True, exist_ok=True)
     sandbox = _sandbox(active, destination)
@@ -184,11 +209,38 @@ def execute_goal(
     policy = _policy(active, destination)
     prompter = _prompter(active)
     plugins = _plugins(active)
+    want_record = bundle_dir is not None or record or active.bundle.record
+    recorder: RunRecorder | None = None
+    if want_record:
+        recorder = RunRecorder(
+            provider=active.model.provider,
+            model=active.model.model,
+            api_base=active.model.api_base,
+            autonomy=active.autonomy.value,
+            sandbox_mode=active.sandbox.mode.value,
+            memory_backend=active.memory.backend,
+            max_steps=max_steps,
+            max_attempts=max_attempts,
+            concurrency=concurrency,
+            engine=engine,
+            dry_run=dry_run,
+        )
+        llm = recorder.wrap_llm(llm)
+        memory = recorder.wrap_memory(memory)
+        prompter = recorder.wrap_prompter(prompter)
 
-    tools = InMemoryToolRegistry()
-    register_builtin_tools(tools, sandbox)
-    mcp_client = _attach_mcp_tools(tools, active, policy, prompter, plugins)
+    registry = InMemoryToolRegistry()
+    register_builtin_tools(registry, sandbox)
+    mcp_client = _attach_mcp_tools(registry, active, policy, prompter, plugins)
+    tools: ToolRegistry = registry
+    if recorder is not None:
+        tools = recorder.wrap_tools(tools)
+        recorder.note_files_before(sandbox.workdir)
     context = _planner_context(goal, memory, plugins)
+    if recorder is not None:
+        recorder.planner_context = context
+        recorder.tool_names = [tool.name for tool in tools.list_tools()]
+        recorder.seal_planner_searches()
 
     try:
         loop = PlanDoVerifyLoop(
@@ -210,24 +262,77 @@ def execute_goal(
         raise
     if loop.engine_note and announce is not None:
         announce(loop.engine_note)
-    loop.on_event = on_event
+
+    def emit(event: LoopEvent) -> None:
+        if recorder is not None:
+            recorder.observe(event.kind, event.plan, event.step_id, event.status, event.text)
+        if on_event is not None:
+            on_event(event)
+
+    loop.on_event = emit
 
     plan = None
+    written: Path | None = None
     try:
         plan = loop.run(goal, dry_run=dry_run, context=context)
         _save_summary(memory, goal, loop.summary_text)
         failed = any(step.status == StepStatus.FAILED for step in plan.steps)
+        if recorder is not None:
+            written = recorder.finish(
+                bundle_dir if bundle_dir is not None else destination / "bundle",
+                plan=plan,
+                results=dict(loop.results),
+                action_log=list(loop.action_log),
+                summary=loop.summary_text,
+                exit_code=1 if failed else 0,
+                output_dir=destination,
+                workdir=sandbox.workdir,
+                strict_plan=_flag(loop, "strict_plan"),
+                memory_mode=_text_flag(loop, "memory_mode"),
+            )
         return GoalResult(
             summary=loop.summary_text,
             output_dir=destination,
             exit_code=1 if failed else 0,
             engine_note=loop.engine_note,
+            bundle_dir=written,
         )
     finally:
         if plan is not None:
             write_run_artifacts(destination, plan, loop.action_log, loop.summary_text)
+        if recorder is not None and not recorder.sealed:
+            try:
+                recorder.finish(
+                    bundle_dir if bundle_dir is not None else destination / "bundle",
+                    plan=plan,
+                    results=dict(loop.results),
+                    action_log=list(loop.action_log),
+                    summary=loop.summary_text,
+                    exit_code=1,
+                    output_dir=destination,
+                    workdir=sandbox.workdir,
+                    strict_plan=_flag(loop, "strict_plan"),
+                    memory_mode=_text_flag(loop, "memory_mode"),
+                )
+            except Exception:
+                pass
+        if recorder is not None and recorder.sealed:
+            try:
+                recorder.attach_external_evidence(destination)
+            except Exception:
+                pass
         if mcp_client is not None:
             mcp_client.close()
+
+
+def _flag(loop: object, name: str) -> bool | None:
+    value = getattr(loop, name, None)
+    return value if isinstance(value, bool) else None
+
+
+def _text_flag(loop: object, name: str) -> str | None:
+    value = getattr(loop, name, None)
+    return value if isinstance(value, str) and value else None
 
 
 def mcp_task_runner(goal: str) -> str:

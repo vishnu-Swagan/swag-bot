@@ -28,9 +28,18 @@ class Planner:
         self.model = model
         self.tool_names = list(tool_names)
         self.context = context
+        self.fell_back = False
+        self.fallback_reason = ""
 
     def create(self, goal: str, *, max_steps: int) -> TaskPlan:
-        """Return a plan for ``goal``. Fall back to one step if the model is unreadable."""
+        """Return a plan for ``goal``. Fall back to one step if the model is unreadable.
+
+        A fallback sets ``fell_back`` and ``fallback_reason`` so the run can
+        record a plan-fallback event. Strict planning, when another change
+        adds it, can read the same fields.
+        """
+        self.fell_back = False
+        self.fallback_reason = ""
         feedback: str | None = None
         for _ in range(2):
             try:
@@ -45,6 +54,10 @@ class Planner:
                 feedback = "The plan had no steps."
                 continue
             return TaskPlan(goal=goal, steps=steps)
+        self.fell_back = True
+        self.fallback_reason = (
+            "PLAN FALLBACK: the model did not return a readable plan after 2 attempts"
+        )
         return TaskPlan(goal=goal, steps=[fallback_step(goal)])
 
     def revise(

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Run bundles. `swag run --record` writes a portable, redacted bundle (plan, model traffic, tool results, approvals, file diffs, evidence ledger). `swag replay` re-executes it from the saved model responses, or live to compare. `swag bundle inspect` and `swag bundle export` share a run. Format: `docs/spec/run-bundle.md`.
+
 ## [0.1.0] - 2026-09-27
 
 First tagged release. This is the v0 agent: `swag run` plans a goal, carries
