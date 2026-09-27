@@ -7,7 +7,8 @@ tools does not need Playwright.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable, Mapping
+from typing import Any, TypeVar, cast
 
 from swag_bot import __version__
 from swag_bot.browser.catalog import TOOLS, BrowserTool
@@ -17,6 +18,34 @@ from swag_bot.errors import SwagError
 _MCP_INSTALL = (
     "The optional mcp package is not installed. Install it with: pip install 'swag-bot[mcp]'"
 )
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _typed_tool(
+    server: Any,
+    *,
+    name: str,
+    description: str,
+    annotations: Any,
+    meta: Mapping[str, Any],
+) -> Callable[[F], F]:
+    """Apply ``server.tool`` without erasing the wrapped function's type.
+
+    ``mcp`` is an optional extra and is untyped when it is not installed
+    (``ignore_missing_imports``). A bare ``@server.tool`` then makes every
+    tool function untyped under strict mypy. This is the same cast as
+    ``swag_bot.mcp.server._typed_tool``. The browser tools also pass a name,
+    annotations, and ``_meta``, which that helper does not. Runtime behavior
+    is unchanged. This module does not import ``swag_bot.mcp``.
+    """
+    decorator = server.tool(
+        name=name,
+        description=description,
+        annotations=annotations,
+        meta=meta,
+    )
+    return cast(Callable[[F], F], decorator)
 
 
 def build_browser_mcp_server(service: BrowserService | None = None) -> Any:
@@ -49,7 +78,8 @@ def build_browser_mcp_server(service: BrowserService | None = None) -> Any:
 
     navigate = TOOLS["navigate"]
 
-    @server.tool(
+    @_typed_tool(
+        server,
         name=navigate.name,
         description=navigate.description,
         annotations=annotations(navigate),
@@ -61,7 +91,8 @@ def build_browser_mcp_server(service: BrowserService | None = None) -> Any:
 
     snapshot = TOOLS["snapshot"]
 
-    @server.tool(
+    @_typed_tool(
+        server,
         name=snapshot.name,
         description=snapshot.description,
         annotations=annotations(snapshot),
@@ -73,7 +104,8 @@ def build_browser_mcp_server(service: BrowserService | None = None) -> Any:
 
     click = TOOLS["click"]
 
-    @server.tool(
+    @_typed_tool(
+        server,
         name=click.name,
         description=click.description,
         annotations=annotations(click),
@@ -85,7 +117,8 @@ def build_browser_mcp_server(service: BrowserService | None = None) -> Any:
 
     type_text = TOOLS["type_text"]
 
-    @server.tool(
+    @_typed_tool(
+        server,
         name=type_text.name,
         description=type_text.description,
         annotations=annotations(type_text),
@@ -97,7 +130,8 @@ def build_browser_mcp_server(service: BrowserService | None = None) -> Any:
 
     fill = TOOLS["fill"]
 
-    @server.tool(
+    @_typed_tool(
+        server,
         name=fill.name,
         description=fill.description,
         annotations=annotations(fill),
@@ -109,7 +143,8 @@ def build_browser_mcp_server(service: BrowserService | None = None) -> Any:
 
     submit = TOOLS["submit"]
 
-    @server.tool(
+    @_typed_tool(
+        server,
         name=submit.name,
         description=submit.description,
         annotations=annotations(submit),
@@ -121,7 +156,8 @@ def build_browser_mcp_server(service: BrowserService | None = None) -> Any:
 
     screenshot = TOOLS["screenshot"]
 
-    @server.tool(
+    @_typed_tool(
+        server,
         name=screenshot.name,
         description=screenshot.description,
         annotations=annotations(screenshot),
@@ -133,7 +169,8 @@ def build_browser_mcp_server(service: BrowserService | None = None) -> Any:
 
     extract = TOOLS["extract"]
 
-    @server.tool(
+    @_typed_tool(
+        server,
         name=extract.name,
         description=extract.description,
         annotations=annotations(extract),
@@ -145,7 +182,8 @@ def build_browser_mcp_server(service: BrowserService | None = None) -> Any:
 
     download = TOOLS["download"]
 
-    @server.tool(
+    @_typed_tool(
+        server,
         name=download.name,
         description=download.description,
         annotations=annotations(download),
