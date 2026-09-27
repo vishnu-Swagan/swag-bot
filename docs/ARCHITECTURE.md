@@ -26,6 +26,7 @@ src/swag_bot/
   mcp/              MCP client and swag serve-mcp
   models/           LiteLLM / Ollama / bring-your-own-key clients
   memory/           pluggable MemoryStore
+  onboarding/       one-prompt setup, MCP approval bridge, install links
 tests/fakes.py      FakeLLMClient, FakeSandbox, InMemoryMemoryStore, AutoApprovePrompter
 ```
 
@@ -215,14 +216,17 @@ load `.env` by itself.
 | `swag plugin` / `swag skill` | load, install, and list Cowork-compatible plugins and skills |
 | `swag safety log\|policy` | action log and autonomy rules |
 | `swag mcp list\|tools\|add\|remove` | MCP servers in `~/.swag/mcp.json` |
-| `swag serve-mcp` | stdio MCP server; `--http` for streamable HTTP. Runs tasks and lists skills |
+| `swag serve-mcp` | stdio MCP server; `--http` for streamable HTTP. Runs tasks and lists skills. Approvals use MCP elicitation, not the terminal |
+| `swag setup --auto` | detect a key, Ollama, or a local OpenAI-compatible server and write `config.toml`. Asks before a model download. Falls back to a free-cloud menu. See `docs/MODELS.md` |
+| `swag install-mcp` | print the install command or link for an MCP client |
 | `swag model list\|test\|set` | Ollama by default, LiteLLM for bring-your-own-key providers |
 | `swag memory add\|search\|list\|forget` | SQLite by default |
 | `swag version` | prints `swag-bot` and the version |
-| `swag doctor` | prints config and optional-dep status |
+| `swag doctor` | prints config and optional-dep status. `--json` adds a `ready` field and never prints secrets |
 
-Optional extras, not installed by CI: `.[models]` (litellm), `.[mcp]` (mcp),
-`.[sandbox]` (docker). `.[dev]` is pytest, ruff, and mypy.
+Optional extras: `.[models]` (litellm), `.[mcp]` (mcp), `.[sandbox]` (docker).
+CI installs `.[dev,mcp]` so the stdio approval test runs. `.[dev]` is pytest,
+ruff, and mypy.
 
 ## Rules for the parallel agents
 

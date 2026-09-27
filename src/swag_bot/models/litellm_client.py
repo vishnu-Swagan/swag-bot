@@ -252,6 +252,10 @@ class LiteLLMClient:
         api_key = provider_api_key(self.provider)
         if api_key:
             kwargs["api_key"] = api_key
+        elif self.provider == "litellm" and self.api_base:
+            # The OpenAI client refuses an empty key. Local servers do not
+            # check this value. It is not a secret and it is not stored.
+            kwargs["api_key"] = "local"
         try:
             return fn(**kwargs)
         except ToolCallingUnsupported:

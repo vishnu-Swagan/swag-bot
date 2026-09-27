@@ -43,6 +43,8 @@ graphbit = ["graphbit"]
 
 [project.scripts]
 swag = "swag_bot.cli:main"
+# Same entry point under the package name so `uvx swag-bot` can launch it.
+swag-bot = "swag_bot.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/vishnu-Swagan/swag-bot"

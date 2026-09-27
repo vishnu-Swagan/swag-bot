@@ -165,6 +165,9 @@ def run(
     ] = None,
 ) -> None:
     """Plan, do, and verify a multi-step task."""
+    from swag_bot.onboarding.setup import first_run_if_needed
+
+    first_run_if_needed(announce=typer.echo)
     if not goal.strip():
         typer.echo("goal must not be empty", err=True)
         raise typer.Exit(code=1)
@@ -231,6 +234,7 @@ def execute_goal(
     evidence: bool | None = None,
     taint_mode: str | None = None,
     escalate: bool | None = None,
+    prompter: ApprovalPrompter | None = None,
 ) -> GoalResult:
     """Run one goal with the configured model, sandbox, policy, tools, and memory.
 
@@ -249,6 +253,9 @@ def execute_goal(
         except ValueError as exc:
             raise SwagError(str(exc)) from exc
 
+    from swag_bot.onboarding.secrets import apply_saved_keys
+
+    apply_saved_keys()
     active = load_settings() if settings is None else settings
     if autonomy is not None:
         active = active.model_copy(update={"autonomy": autonomy})
@@ -282,9 +289,9 @@ def execute_goal(
     sandbox = _sandbox(active, destination)
     memory = _memory(active)
     policy = _policy(active, destination)
-    prompter = _prompter(active)
+    active_prompter = prompter if prompter is not None else _prompter(active)
     if display is not None:
-        prompter = PromptSuspender(prompter, display)
+        active_prompter = PromptSuspender(active_prompter, display)
     plugins = _plugins(active)
     if active.memory.mode == "off" and announce is not None:
         announce("memory off: this run will not read or write memory")
@@ -295,7 +302,7 @@ def execute_goal(
         tracker.note(goal, source="user", trust=TrustLevel.TRUSTED)
     tools = InMemoryToolRegistry()
     register_builtin_tools(tools, sandbox)
-    mcp_client = _attach_mcp_tools(tools, active, policy, prompter, plugins, tracker)
+    mcp_client = _attach_mcp_tools(tools, active, policy, active_prompter, plugins, tracker)
     if undo is not None:
         _note_mcp_compensations(undo, tools)
     context = _planner_context(
@@ -321,7 +328,7 @@ def execute_goal(
             sandbox=sandbox,
             memory=memory,
             policy=policy,
-            prompter=prompter,
+            prompter=active_prompter,
             tools=tools,
             model=active.model.model,
             max_steps=max_steps,
@@ -355,7 +362,7 @@ def execute_goal(
             goal,
             loop.summary_text,
             mode=active.memory.mode,
-            prompter=prompter,
+            prompter=active_prompter,
             run_id=plan.id,
             announce=announce,
         )
@@ -382,10 +389,13 @@ def execute_goal(
 def mcp_task_runner(goal: str) -> str:
     """Run a goal for ``swag serve-mcp`` and return the summary text.
 
-    Stdout stays quiet so it does not corrupt a stdio MCP session.
+    The prompter is the one bound for this MCP request. It never reads stdin
+    or writes stdout, because those streams are the stdio protocol channel.
     """
+    from swag_bot.onboarding.approvals import current_mcp_prompter
+
     try:
-        return execute_goal(goal).summary
+        return execute_goal(goal, prompter=current_mcp_prompter()).summary
     except SwagError as exc:
         return str(exc)
 

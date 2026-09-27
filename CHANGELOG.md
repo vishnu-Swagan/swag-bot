@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Taint firewall for tool output. Web pages, MCP results, plugin output, and files from outside the workspace are labeled untrusted. Those labels cannot by themselves drive network, destructive, credential, or send actions. `swag run --taint-mode escalate|block|off`. See `docs/TAINT.md`.
 - Opt-in uncertainty escalation (`escalation.enabled`, or `swag run --escalate`). An uncertain step asks a specific question and stops if you do not answer. Irreversible actions can require a small jury. A single local model is enough. The jury uses `safety.reversibility`. See `docs/ESCALATION.md`.
 - Small-model harness. `swag model probe` and `swag doctor --probe` profile the active model (JSON adherence, tool calls, context size) and cache the result. `swag run` adapts prompts, tool exposure, and plan checks to that profile, and can escalate a failing step to `model.fallback` inside `model.budget`. Ollama request timeouts rise above 120 seconds for local models unless `model.timeout` is set.
+- One command to install and run a task: `scripts/install.sh` (and `scripts/install.ps1`), plus `uvx` / pipx instructions that install from Git until `PYPI_PUBLISHED` is flipped
+- `swag setup --auto` detects a bring-your-own-key environment variable, a local Ollama model, or a running OpenAI-compatible server (LM Studio, Jan, llama.cpp / llamafile, GPT4All, or `--base-url`). It asks before pulling `qwen2.5:7b` (about 4.7 GB). A 3B-only install is not treated as ready. When nothing local is found it can store a free-plan key (Gemini, Groq, OpenRouter, Cerebras, Mistral) in a mode-0600 file. See `docs/MODELS.md`
+- `swag doctor --json` prints a readiness report with `ready` and does not include secret values
+- `swag install-mcp` prints the Claude Code command, the Cursor and VS Code install links, and the Gemini, Claude Desktop, and ChatGPT notes
+- Claude marketplace entry, Gemini CLI extension manifest, and a Claude Desktop MCPB bundle under `packaging/mcpb`
+- `swag serve-mcp` asks for write and shell approval with MCP elicitation. Clients that cannot show the form get a denial in the tool result, or a preapproved grant from `swag setup --grant`. The server does not read stdin or write prompts to stdout
+- MCP tools `swag_start_task`, `swag_task_status`, `swag_task_result`, and `swag_setup_status`
 
 ## [0.1.0] - 2026-09-27
 
