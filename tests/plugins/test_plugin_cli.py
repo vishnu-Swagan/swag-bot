@@ -60,8 +60,9 @@ def test_install_list_info_disable_remove(
     denied = runner.invoke(app, ["plugin", "install", str(source)], input="n\n")
     denied_text = _visible(denied)
     assert denied.exit_code == 1
-    assert "filesystem.read" in denied_text
-    assert "mcp" in denied_text
+    assert denied_text.count("filesystem.read") == 1
+    assert denied_text.count("mcp") == 1
+    assert "Requested permissions:" not in denied_text
     assert "installation denied" in denied_text
     assert not (home / "plugins" / "demo-plugin").exists()
 
@@ -109,6 +110,11 @@ def test_install_list_info_disable_remove(
     assert "pdf-processing" in both_text
     assert "notes" in both_text
     assert "demo-skill" in both_text
+
+    monkeypatch.setenv("COLUMNS", "40")
+    from swag_bot.plugins.cli import _console
+
+    assert _console().width == 40
 
     removed = runner.invoke(app, ["plugin", "remove", "demo-plugin"])
     assert removed.exit_code == 0

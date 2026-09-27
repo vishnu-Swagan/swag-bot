@@ -1,0 +1,19 @@
+{
+  "name": "browser",
+  "displayName": "Browser",
+  "version": "0.1.0",
+  "description": "Browse the web from Swag Bot: open pages, read them, click, type, fill forms, and extract data.",
+  "author": {
+    "name": "Swag Bot",
+    "url": "https://github.com/vishnu-Swagan/swag-bot"
+  },
+  "homepage": "https://github.com/vishnu-Swagan/swag-bot",
+  "repository": "https://github.com/vishnu-Swagan/swag-bot",
+  "license": "MIT",
+  "keywords": ["browser", "playwright", "mcp", "web"],
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "agents": "./agents/",
+  "mcpServers": "./.mcp.json",
+  "permissions": ["filesystem.write", "mcp", "network"]
+}

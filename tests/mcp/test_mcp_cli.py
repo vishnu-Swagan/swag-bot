@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from typer.testing import CliRunner
 
 from swag_bot.cli import app
@@ -66,6 +69,17 @@ def test_mcp_add_http_and_tools_when_empty() -> None:
     tools = runner.invoke(app, ["mcp", "tools"])
     assert tools.exit_code == 0
     assert "No MCP tools" in visible(tools)
+
+
+def test_mcp_help_uses_swag_home_not_a_hardcoded_tilde() -> None:
+    home = Path(os.environ["SWAG_HOME"])
+    expected = str(home / "mcp.json")
+    for command in ("list", "add", "remove"):
+        result = runner.invoke(app, ["mcp", command, "--help"])
+        text = visible(result)
+        assert result.exit_code == 0
+        assert expected in text
+        assert "~/.swag/mcp.json" not in text
 
 
 def test_mcp_help_lists_commands() -> None:

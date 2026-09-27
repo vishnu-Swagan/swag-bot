@@ -16,3 +16,6 @@ htmlcov/
 *.swp
 .DS_Store
 .swag/
+extension/node_modules/
+extension/dist/
+extension/store/dist/

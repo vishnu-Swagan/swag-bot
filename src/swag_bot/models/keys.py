@@ -17,7 +17,15 @@ PROVIDER_ENV_VARS: tuple[tuple[str, str], ...] = (
     ("openrouter", "OPENROUTER_API_KEY"),
 )
 
-_EXTRA_SECRET_ENV_VARS = ("AGENTMEMORY_SECRET",)
+# LiteLLM reads these itself when the model string is groq/, cerebras/, or
+# mistral/. They are not in PROVIDER_ENV_VARS, which is the bring-your-own-key
+# set the client looks up by provider name. They are redacted when set.
+_EXTRA_SECRET_ENV_VARS = (
+    "AGENTMEMORY_SECRET",
+    "GROQ_API_KEY",
+    "CEREBRAS_API_KEY",
+    "MISTRAL_API_KEY",
+)
 
 
 def env_is_set(name: str) -> bool:

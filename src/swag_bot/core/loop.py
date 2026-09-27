@@ -7,15 +7,27 @@ plugins, mcp, or memory. ``swag run`` is the composition root.
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
+from swag_bot.core.bundle.context import current_attempt as bundle_attempt
+from swag_bot.core.bundle.context import current_step_id
 from swag_bot.core.engine import WorkflowEngine, build_engine
+from swag_bot.core.escalation import EscalationController
+from swag_bot.core.evidence import EvidenceLedger, current_attempt
 from swag_bot.core.executor import StepExecutor
+from swag_bot.core.handoff import StepManifest, changed_files, render_handoff, snapshot_text_files
+from swag_bot.core.memory_journal import commit_memory, normalize_memory_mode, provenance_metadata
 from swag_bot.core.planner import Planner
+from swag_bot.core.scaffold import RunScaffold, StepEscalation
+from swag_bot.core.structured import schema_rejected
+from swag_bot.core.structured_output import forward_chat
 from swag_bot.core.summary import render_record, summarize
 from swag_bot.core.tools import register_builtin_tools
-from swag_bot.core.verifier import Verifier
+from swag_bot.core.verifier import Verdict, Verifier
 from swag_bot.interfaces import (
     ActionLogEntry,
     ApprovalPrompter,
@@ -28,21 +40,31 @@ from swag_bot.interfaces import (
     Step,
     StepResult,
     StepStatus,
+    TaintTracker,
     TaskPlan,
     Tool,
     ToolRegistry,
+    UndoController,
 )
 from swag_bot.registry import InMemoryToolRegistry
 
 _TERMINAL_NOTE = {StepStatus.FAILED, StepStatus.SKIPPED}
 
 
+def _tool_rounds(scaffold: RunScaffold | None) -> int:
+    if scaffold is None or scaffold.max_tool_rounds is None:
+        return 6
+    return scaffold.max_tool_rounds
+
+
 @dataclass(frozen=True)
 class LoopEvent:
     """A progress signal for the CLI or a test.
 
-    ``kind`` is ``plan`` (the plan changed), ``status`` (a step changed),
-    ``output`` (an observation), or ``tool`` (a tool ran or was denied).
+    ``kind`` is ``plan`` (the plan changed), ``plan_fallback`` (the model
+    plan could not be parsed), ``status`` (a step changed), ``output`` (an
+    observation), ``tool`` (a tool ran or was denied), or ``memory`` (a
+    memory write was saved or declined).
     """
 
     kind: str
@@ -65,13 +87,42 @@ class _LockedLLM:
         *,
         tools: Sequence[Tool] | None = None,
         model: str | None = None,
+        response_format: Mapping[str, Any] | None = None,
     ) -> ChatResponse:
         with self._lock:
-            return self._inner.chat(messages, tools=tools, model=model)
+            return forward_chat(
+                self._inner,
+                messages,
+                tools=tools,
+                model=model,
+                response_format=response_format,
+            )
 
     def complete(self, prompt: str, *, model: str | None = None) -> str:
         with self._lock:
             return self._inner.complete(prompt, model=model)
+
+    def complete_structured(
+        self,
+        messages: Sequence[Message],
+        schema: object,
+        *,
+        model: str | None = None,
+    ) -> ChatResponse:
+        """Forward a JSON-schema call when the inner client implements it."""
+        method = getattr(self._inner, "complete_structured", None)
+        with self._lock:
+            if not callable(method):
+                return self._inner.chat(messages, model=model)
+            try:
+                response = method(messages, schema, model=model)
+            except Exception as exc:
+                if not schema_rejected(exc):
+                    raise
+                return self._inner.chat(messages, model=model)
+            if isinstance(response, ChatResponse):
+                return response
+            return self._inner.chat(messages, model=model)
 
 
 class PlanDoVerifyLoop:
@@ -98,6 +149,16 @@ class PlanDoVerifyLoop:
         engine: str = "python",
         graphbit_module: object | None = None,
         on_event: Callable[[LoopEvent], None] | None = None,
+        strict_plan: bool = False,
+        memory_mode: str = "auto",
+        action_sink: Callable[[ActionLogEntry], None] | None = None,
+        evidence_dir: Path | None = None,
+        evidence_enabled: bool = True,
+        undo: UndoController | None = None,
+        taint: TaintTracker | None = None,
+        escalation: EscalationController | None = None,
+        scaffold: RunScaffold | None = None,
+        model_escalation: StepEscalation | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
@@ -115,6 +176,19 @@ class PlanDoVerifyLoop:
         self.max_attempts = max_attempts
         self.concurrency = concurrency
         self.on_event = on_event
+        self.strict_plan = strict_plan
+        self.memory_mode = normalize_memory_mode(memory_mode)
+        self.action_sink = action_sink
+        self.evidence_dir = evidence_dir
+        self.evidence_enabled = evidence_enabled
+        self.ledger = EvidenceLedger(directory=evidence_dir)
+        self.undo = undo
+        self.taint = taint
+        self.escalation = escalation
+        self.scaffold = scaffold
+        self.model_escalation = model_escalation
+        if scaffold is not None and scaffold.max_steps is not None:
+            self.max_steps = min(self.max_steps, scaffold.max_steps)
         if tools is None:
             tools = InMemoryToolRegistry()
         register_builtin_tools(tools, sandbox)
@@ -126,16 +200,28 @@ class PlanDoVerifyLoop:
         self.results: dict[str, StepResult] = {}
         self.summary_text = ""
         self._llm = _LockedLLM(llm)
+        self._fallback_llm = (
+            _LockedLLM(model_escalation.llm) if model_escalation is not None else None
+        )
         self._plan: TaskPlan | None = None
         self._notes: dict[str, str] = {}
         self._replan_requests: list[tuple[Step, str]] = []
         self._replans = 0
+        self._manifests: dict[str, StepManifest] = {}
+        self._remembered: list[str] = []
         self._log_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._emit_lock = threading.Lock()
         self._local = threading.local()
 
-    def run(self, goal: str, *, dry_run: bool = False, context: str = "") -> TaskPlan:
+    def run(
+        self,
+        goal: str,
+        *,
+        dry_run: bool = False,
+        context: str = "",
+        run_id: str | None = None,
+    ) -> TaskPlan:
         """Plan, do, and verify ``goal``. A dry run returns the plan unexecuted.
 
         ``context`` is extra planner text from the composition root: recalled
@@ -150,15 +236,38 @@ class PlanDoVerifyLoop:
         self._notes.clear()
         self._replans = 0
         self._plan = None
+        self._manifests.clear()
+        self._remembered.clear()
+        self.ledger = EvidenceLedger(directory=self.evidence_dir)
 
         names = [tool.name for tool in self.tools.list_tools()]
-        planner = Planner(self._llm, model=self.model, tool_names=names, context=context)
+        scaffold = self.scaffold
+        planner = Planner(
+            self._llm,
+            model=self.model,
+            tool_names=names,
+            context=context,
+            system=None if scaffold is None else scaffold.planner_system,
+            response_schema=None if scaffold is None else scaffold.plan_schema,
+            strict=self.strict_plan or (scaffold is not None and scaffold.strict_plan),
+        )
         plan = planner.create(goal, max_steps=self.max_steps)
+        if run_id and run_id.strip():
+            plan.id = run_id.strip()
         self._plan = plan
+        self.ledger.set_run(plan.id, plan.goal)
+        if planner.fell_back:
+            self._emit(
+                LoopEvent(kind="plan_fallback", plan=plan, text=planner.fallback_reason)
+            )
         self._emit(LoopEvent(kind="plan", plan=plan))
+        if self.escalation is not None:
+            self.escalation.bind_goal(goal)
         if dry_run:
             self.summary_text = summarize(self._llm, plan, {}, model=self.model, dry_run=True)
             return plan
+        if self.undo is not None:
+            self.undo.begin_run(plan.id, self.sandbox.workdir)
 
         executor = StepExecutor(
             llm=self._llm,
@@ -167,10 +276,30 @@ class PlanDoVerifyLoop:
             prompter=self.prompter,
             memory=self.memory,
             model=self.model,
+            max_tool_rounds=_tool_rounds(scaffold),
             on_action=self._record,
             on_tool=self._on_tool,
+            memory_mode=self.memory_mode,
+            ledger=self.ledger,
+            taint=self.taint,
+            escalation=self.escalation,
+            system=None if scaffold is None else scaffold.executor_system,
+            pick_tools=None if scaffold is None else scaffold.pick_tools,
+            guard_repeat_writes=False if scaffold is None else scaffold.guard_repeat_writes,
+            retry_blank_turns=False if scaffold is None else scaffold.retry_blank_turns,
         )
-        verifier = Verifier(self._llm, model=self.model)
+        verifier = Verifier(
+            self._llm,
+            model=self.model,
+            sandbox=self.sandbox,
+            ledger=self.ledger,
+            policy=self.policy,
+            prompter=self.prompter,
+            on_action=self._record,
+            grounded=self.evidence_enabled,
+            system=None if scaffold is None else scaffold.verifier_system,
+            response_schema=None if scaffold is None else scaffold.verdict_schema,
+        )
         while True:
             self.engine.run(
                 plan,
@@ -188,6 +317,7 @@ class PlanDoVerifyLoop:
                 dict(self.results),
                 model=self.model,
                 dry_run=False,
+                remembered=list(self._remembered),
             )
         except Exception:
             self.summary_text = render_record(plan, dict(self.results))
@@ -196,37 +326,239 @@ class PlanDoVerifyLoop:
     def _execute_step(self, step: Step, executor: StepExecutor, verifier: Verifier) -> None:
         self._local.step_id = step.id
         feedback: str | None = None
+        before = snapshot_text_files(self.sandbox.workdir)
+        step_token = current_step_id.set(step.id)
         try:
             for attempt in range(1, self.max_attempts + 1):
-                step.status = StepStatus.DOING
-                self._emit_status(step)
-                result = executor.execute(step, attempt=attempt, feedback=feedback)
-                if result.observation:
-                    self._emit(
-                        LoopEvent(
-                            kind="output",
-                            plan=self._require_plan(),
-                            step_id=step.id,
-                            text=result.observation,
-                        )
-                    )
-                step.status = StepStatus.VERIFYING
-                self._emit_status(step)
-                verdict = verifier.check(step, result)
-                if verdict.passed:
-                    step.status = StepStatus.DONE
-                    result.status = StepStatus.DONE
-                    result.verified = True
-                    self._store(result)
-                    self._remember(step, result)
+                token = current_attempt.set(attempt)
+                attempt_token = bundle_attempt.set(attempt)
+                try:
+                    stop, feedback = self._gate_step(step, attempt, feedback)
+                    if stop:
+                        return
+                    step.status = StepStatus.DOING
                     self._emit_status(step)
-                    return
-                feedback = verdict.reason
-                if verdict.replan or attempt >= self.max_attempts:
-                    self._fail(step, result, verdict.reason, replan=verdict.replan)
-                    return
+                    if self.undo is not None:
+                        self.undo.begin_step(step.id)
+                    result = executor.execute(
+                        step,
+                        attempt=attempt,
+                        feedback=feedback,
+                        handoff=self._handoff_for(step),
+                    )
+                    if self.escalation is not None:
+                        self.escalation.note_observation(step.id, result.observation)
+                    self._emit_observation(step, result)
+                    step.status = StepStatus.VERIFYING
+                    self._emit_status(step)
+                    verdict = self._verdict(step, result, executor, verifier)
+                    if self.escalation is not None:
+                        self.escalation.note_verdict(step.id, verdict.passed, verdict.reason)
+                    result.evidence_ids = list(verdict.evidence_ids)
+                    result.check_results = list(verdict.check_results)
+                    if self._passed(verdict):
+                        self._accept(step, result, before)
+                        return
+                    if self.evidence_enabled and (verdict.unverified or verdict.passed):
+                        feedback = verdict.reason
+                        if attempt >= self.max_attempts:
+                            self._unverified(step, result, verdict.reason)
+                            self._rollback_step(step.id)
+                            return
+                        self._rollback_step(step.id)
+                        continue
+                    feedback = verdict.reason
+                    if verdict.replan or attempt >= self.max_attempts:
+                        escalated = self._try_escalate(step, feedback)
+                        if escalated is not None:
+                            result, verdict = escalated
+                            result.evidence_ids = list(verdict.evidence_ids)
+                            result.check_results = list(verdict.check_results)
+                            if self._passed(verdict):
+                                self._accept(step, result, before)
+                                return
+                            if self.evidence_enabled and (verdict.unverified or verdict.passed):
+                                self._unverified(step, result, verdict.reason)
+                                self._rollback_step(step.id)
+                                return
+                            feedback = verdict.reason
+                        self._fail(step, result, feedback, replan=verdict.replan)
+                        self._rollback_step(step.id)
+                        return
+                    self._rollback_step(step.id)
+                finally:
+                    current_attempt.reset(token)
+                    bundle_attempt.reset(attempt_token)
         finally:
+            current_step_id.reset(step_token)
             self._local.step_id = None
+
+    def _passed(self, verdict: Verdict) -> bool:
+        return verdict.passed and (bool(verdict.evidence_ids) or not self.evidence_enabled)
+
+    def _unverified(self, step: Step, result: StepResult, reason: str) -> None:
+        step.status = StepStatus.UNVERIFIED
+        result.status = StepStatus.UNVERIFIED
+        result.error = reason
+        result.verified = False
+        self._store(result)
+        self._emit_status(step)
+
+    def _gate_step(
+        self,
+        step: Step,
+        attempt: int,
+        feedback: str | None,
+    ) -> tuple[bool, str | None]:
+        """Return ``(stop, feedback)``.
+
+        ``stop`` is true only when the user gave no answer to an uncertainty
+        question. The step is already marked failed in that case. Feedback
+        stays None on a first attempt that does not escalate.
+        """
+        if self.escalation is None:
+            return False, feedback
+        estimate = self.escalation.estimate(step, attempt=attempt)
+        if not estimate.should_escalate:
+            return False, feedback
+        self._emit(
+            LoopEvent(
+                kind="clarify",
+                plan=self._require_plan(),
+                step_id=step.id,
+                text=estimate.question,
+            )
+        )
+        answer = self.escalation.ask(estimate, step)
+        if not answer:
+            reason = f"Stopped to avoid guessing. {estimate.question}"
+            self._fail(
+                step,
+                StepResult(step_id=step.id, status=StepStatus.FAILED, error=reason),
+                reason,
+                replan=False,
+            )
+            return True, feedback
+        note = f"The user answered: {answer}\nFollow that answer. Do not guess beyond it."
+        if feedback:
+            return False, f"{feedback}\n\n{note}"
+        return False, note
+
+    def _accept(self, step: Step, result: StepResult, before: dict[str, str]) -> None:
+        step.status = StepStatus.DONE
+        result.status = StepStatus.DONE
+        result.verified = True
+        self._store(result)
+        self._publish_manifest(step, result, before)
+        self._remember(step, result)
+        self._emit_status(step)
+
+    def _emit_observation(self, step: Step, result: StepResult) -> None:
+        if not result.observation:
+            return
+        self._emit(
+            LoopEvent(
+                kind="output",
+                plan=self._require_plan(),
+                step_id=step.id,
+                text=result.observation,
+            )
+        )
+
+    def _verdict(
+        self,
+        step: Step,
+        result: StepResult,
+        executor: StepExecutor,
+        verifier: Verifier,
+    ) -> Verdict:
+        scaffold = self.scaffold
+        if scaffold is not None and scaffold.precheck is not None:
+            early = scaffold.precheck(step, result, executor.trace_for(step.id))
+            if early is not None:
+                ids = tuple(
+                    item.id for item in self.ledger.for_step(step.id) if item.ok and item.id
+                )
+                return Verdict(early.passed, early.reason, early.replan, ids)
+        return verifier.check(step, result)
+
+    def _try_escalate(
+        self,
+        step: Step,
+        feedback: str,
+    ) -> tuple[StepResult, Verdict] | None:
+        """Re-run one failed step on the fallback model when the budget allows it."""
+        escalation = self.model_escalation
+        fallback = self._fallback_llm
+        if escalation is None or fallback is None or not escalation.allow():
+            return None
+        self._emit(
+            LoopEvent(
+                kind="escalate",
+                plan=self._require_plan(),
+                step_id=step.id,
+                text=f"escalating {step.id} to {escalation.model}",
+            )
+        )
+        scaffold = self.scaffold
+        strong = StepExecutor(
+            llm=fallback,
+            tools=self.tools,
+            policy=self.policy,
+            prompter=self.prompter,
+            memory=self.memory,
+            model=escalation.model,
+            max_tool_rounds=_tool_rounds(scaffold),
+            on_action=self._record,
+            on_tool=self._on_tool,
+            memory_mode=self.memory_mode,
+            ledger=self.ledger,
+            taint=self.taint,
+            escalation=self.escalation,
+            system=None if scaffold is None else scaffold.executor_system,
+            pick_tools=None if scaffold is None else scaffold.pick_tools,
+            guard_repeat_writes=False if scaffold is None else scaffold.guard_repeat_writes,
+            retry_blank_turns=False if scaffold is None else scaffold.retry_blank_turns,
+        )
+        started = time.monotonic()
+        try:
+            result = strong.execute(
+                step,
+                attempt=self.max_attempts + 1,
+                feedback=feedback,
+                handoff=self._handoff_for(step),
+            )
+        except Exception as exc:
+            result = StepResult(
+                step_id=step.id,
+                status=StepStatus.VERIFYING,
+                observation="",
+                error=str(exc),
+            )
+            verdict = Verdict(False, f"escalation failed: {exc}", False)
+        else:
+            if self.escalation is not None:
+                self.escalation.note_observation(step.id, result.observation)
+            self._emit_observation(step, result)
+            verifier = Verifier(
+                fallback,
+                model=escalation.model,
+                sandbox=self.sandbox,
+                ledger=self.ledger,
+                policy=self.policy,
+                prompter=self.prompter,
+                on_action=self._record,
+                grounded=self.evidence_enabled,
+                system=None if scaffold is None else scaffold.verifier_system,
+                response_schema=None if scaffold is None else scaffold.verdict_schema,
+            )
+            verdict = self._verdict(step, result, strong, verifier)
+            if self.escalation is not None:
+                self.escalation.note_verdict(step.id, verdict.passed, verdict.reason)
+        finally:
+            escalation.charge(time.monotonic() - started)
+        return result, verdict
+
 
     def _fail(self, step: Step, result: StepResult, reason: str, *, replan: bool) -> None:
         step.status = StepStatus.FAILED
@@ -276,19 +608,75 @@ class PlanDoVerifyLoop:
             )
         self._emit_status(step)
 
+    def _handoff_for(self, step: Step) -> str:
+        with self._state_lock:
+            manifests = [
+                self._manifests[dep] for dep in step.depends_on if dep in self._manifests
+            ]
+        return render_handoff(manifests)
+
+    def _publish_manifest(self, step: Step, result: StepResult, before: dict[str, str]) -> None:
+        after = snapshot_text_files(self.sandbox.workdir)
+        files = tuple(changed_files(before, after))
+        evidence = _evidence_ids(result, self.ledger, step.id)
+        manifest = StepManifest(
+            step_id=step.id,
+            title=step.title,
+            observation=result.observation,
+            files=files,
+            evidence_ids=evidence,
+        )
+        with self._state_lock:
+            self._manifests[step.id] = manifest
+
     def _remember(self, step: Step, result: StepResult) -> None:
-        try:
-            self.memory.add(
-                f"{step.title}: {result.observation}",
-                metadata={"step_id": step.id},
-            )
-        except Exception:
-            # The step already passed. A memory outage should not undo that.
+        if self.memory_mode == "off" or self._plan is None:
             return
+        with self._state_lock:
+            manifest = self._manifests.get(step.id)
+        evidence = manifest.evidence_ids if manifest is not None else tuple(result.evidence_ids)
+        notice = commit_memory(
+            self.memory,
+            f"{step.title}: {result.observation}",
+            mode=self.memory_mode,
+            prompter=self.prompter,
+            metadata=provenance_metadata(
+                run_id=self._plan.id,
+                kind="step",
+                goal=self._plan.goal,
+                step_id=step.id,
+                evidence_ids=evidence,
+            ),
+        )
+        if notice is None:
+            return
+        if notice.saved:
+            self._remembered.append(notice.text)
+        self._emit(
+            LoopEvent(
+                kind="memory",
+                plan=self._require_plan(),
+                step_id=step.id,
+                text=notice.text,
+            )
+        )
+
+    def _rollback_step(self, step_id: str) -> None:
+        if self.undo is None or not self.undo.auto_rollback:
+            return
+        self.undo.rollback_step(step_id)
 
     def _record(self, entry: ActionLogEntry) -> None:
+        plan = self._plan
+        if plan is not None and entry.run_id is None:
+            entry = entry.model_copy(update={"run_id": plan.id})
         with self._log_lock:
             self.action_log.append(entry)
+            self.ledger.add_action(entry)
+        if self.action_sink is not None:
+            self.action_sink(entry)
+        if self.undo is not None and entry.approved:
+            self.undo.note_action(entry.action, outcome=entry.outcome)
 
     def _on_tool(self, text: str) -> None:
         step_id = getattr(self._local, "step_id", None)
@@ -325,3 +713,11 @@ class PlanDoVerifyLoop:
         if self._plan is None:
             raise RuntimeError("the loop has no plan yet")
         return self._plan
+
+
+def _evidence_ids(result: StepResult, ledger: EvidenceLedger, step_id: str) -> tuple[str, ...]:
+    """Ids the next step can cite. Prefer the verdict, then the ledger itself."""
+    ids = [item for item in result.evidence_ids if item]
+    if ids:
+        return tuple(ids)
+    return tuple(item.id for item in ledger.for_step(step_id) if item.id)

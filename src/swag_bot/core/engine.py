@@ -18,8 +18,8 @@ from swag_bot.interfaces import Step, StepStatus, TaskPlan
 Worker = Callable[[Step], None]
 StatusCallback = Callable[[Step], None]
 
-_TERMINAL = {StepStatus.DONE, StepStatus.FAILED, StepStatus.SKIPPED}
-_BLOCKING = {StepStatus.FAILED, StepStatus.SKIPPED}
+_TERMINAL = {StepStatus.DONE, StepStatus.FAILED, StepStatus.UNVERIFIED, StepStatus.SKIPPED}
+_BLOCKING = {StepStatus.FAILED, StepStatus.UNVERIFIED, StepStatus.SKIPPED}
 
 
 class WorkflowEngine(Protocol):
@@ -102,7 +102,9 @@ class PythonWorkflowEngine:
                 deps = [by_id[dep] for dep in step.depends_on]
                 if any(dep.status in _BLOCKING for dep in deps):
                     step.status = StepStatus.SKIPPED
-                    notes[step.id] = "Skipped because a dependency failed or was skipped."
+                    notes[step.id] = (
+                        "Skipped because a dependency failed, was skipped, or was unverified."
+                    )
                     progressed = True
                     if on_status is not None:
                         on_status(step)

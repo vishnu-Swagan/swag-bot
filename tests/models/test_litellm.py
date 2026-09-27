@@ -45,6 +45,21 @@ def test_is_streaming_and_hides_keys_from_repr(monkeypatch: pytest.MonkeyPatch) 
     assert "sk-test-openai" not in repr(client)
 
 
+def test_complete_structured_sends_json_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+    recorder = Recorder([_chat('{"ok": true}')])
+    client = LiteLLMClient(provider="openai", model="gpt-4o-mini", completion_fn=recorder)
+    schema = {"type": "object", "required": ["ok"]}
+    response = client.complete_structured([Message.user("probe")], schema)
+    assert response.message.content == '{"ok": true}'
+    call = recorder.calls[0]
+    assert call["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "swag_structured", "schema": schema},
+    }
+    assert "tools" not in call
+
+
 def test_passes_prefixed_model_and_key_without_storing_it(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     recorder = Recorder([_chat("ok")])
@@ -61,6 +76,34 @@ def test_passes_prefixed_model_and_key_without_storing_it(monkeypatch: pytest.Mo
     assert call["api_base"] == "https://example.test/v1"
     assert call["stream"] is False
     assert "sk-ant-test" not in repr(client)
+
+
+def test_local_openai_route_sends_a_placeholder_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    recorder = Recorder([_chat("ok")])
+    client = LiteLLMClient(
+        provider="litellm",
+        model="openai/qwen2.5-7b",
+        api_base="http://localhost:1234/v1",
+        completion_fn=recorder,
+    )
+    assert client.complete("hi") == "ok"
+    call = recorder.calls[0]
+    assert call["model"] == "openai/qwen2.5-7b"
+    assert call["api_base"] == "http://localhost:1234/v1"
+    assert call["api_key"] == "local"
+
+
+def test_litellm_cloud_prefix_does_not_invent_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    recorder = Recorder([_chat("ok")])
+    client = LiteLLMClient(
+        provider="litellm",
+        model="groq/llama-3.3-70b-versatile",
+        completion_fn=recorder,
+    )
+    assert client.complete("hi") == "ok"
+    assert "api_key" not in recorder.calls[0]
 
 
 def test_provider_prefixes() -> None:
@@ -191,6 +234,31 @@ def test_partial_tool_argument_is_not_emitted_until_it_is_json() -> None:
     chunks = list(client.stream([Message.user("sum")], tools=[Tool(name="add")]))
     assert chunks[0].tool_call_deltas == []
     assert chunks[1].tool_call_deltas[0].arguments == {"a": 1}
+
+
+def test_response_format_is_forwarded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    schema = {
+        "type": "json_schema",
+        "json_schema": {"name": "task_plan", "schema": {"type": "object"}},
+    }
+    recorder = Recorder([_chat("{}")])
+    client = LiteLLMClient(provider="openai", model="gpt-4o-mini", completion_fn=recorder)
+    assert client.chat([Message.user("plan")], response_format=schema).message.content == "{}"
+    assert recorder.calls[0]["response_format"] == schema
+
+
+def test_rejected_response_format_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    recorder = Recorder([RuntimeError("response_format is not supported"), _chat("ok")])
+    client = LiteLLMClient(provider="openai", model="gpt-4o-mini", completion_fn=recorder)
+    text = client.chat(
+        [Message.user("plan")],
+        response_format={"type": "json_object"},
+    )
+    assert text.message.content == "ok"
+    assert "response_format" in recorder.calls[0]
+    assert "response_format" not in recorder.calls[1]
 
 
 def test_missing_litellm_package(monkeypatch: pytest.MonkeyPatch) -> None:

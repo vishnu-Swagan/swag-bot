@@ -153,3 +153,83 @@ def test_recorder_sees_auto_approval() -> None:
     )
     client.call_tool("demo__echo", {"text": "hi"})
     assert recorded == [(True, "auto")]
+
+
+def test_taint_deny_stamp_skips_the_mcp_tool() -> None:
+    from swag_bot.interfaces import SWAG_TAINT_KEY
+
+    server, calls = _echo_server()
+    seen: list[tuple[str, str]] = []
+
+    class _Tracker:
+        def note(self, text: str, *, source: str, trust: object) -> None:
+            del text, source, trust
+
+        def register_tool(self, name: str, meta: object) -> None:
+            del name, meta
+
+        def prepare(self, action: ActionRequest, *, tool: str) -> ActionRequest:
+            if tool == "demo__echo":
+                arguments = dict(action.arguments)
+                arguments[SWAG_TAINT_KEY] = {
+                    "tainted": True,
+                    "enforcement": "deny",
+                    "message": "Taint firewall: untrusted data (mcp:demo) cannot drive this.",
+                    "sources": ["mcp:demo"],
+                    "sinks": ["network"],
+                }
+                return action.model_copy(update={"arguments": arguments})
+            return action
+
+        def label_output(self, tool: str, arguments: object, output: str) -> str:
+            del tool, arguments
+            return output
+
+        def observe_result(self, tool: str, output: str, meta: object = None) -> None:
+            del meta
+            seen.append((tool, output))
+
+    client = SwagMCPClient(
+        [MCPServerSpec(name="demo", command="unused")],
+        policy=DefaultPermissionPolicy(AutonomyLevel.AUTO, taint_mode="escalate"),
+        opener=in_memory_connector({"demo": server}),
+        taint=_Tracker(),  # type: ignore[arg-type]
+    )
+    with pytest.raises(MCPPermissionDenied):
+        client.call_tool("demo__echo", {"text": "hi"})
+    assert calls["n"] == 0
+    assert seen == []
+
+
+def test_mcp_result_is_recorded_and_returned_raw() -> None:
+    server, calls = _echo_server()
+    recorded: list[str] = []
+
+    class _Tracker:
+        def note(self, text: str, *, source: str, trust: object) -> None:
+            del text, source, trust
+
+        def register_tool(self, name: str, meta: object) -> None:
+            del name, meta
+
+        def prepare(self, action: ActionRequest, *, tool: str) -> ActionRequest:
+            del tool
+            return action
+
+        def label_output(self, tool: str, arguments: object, output: str) -> str:
+            del tool, arguments
+            return output
+
+        def observe_result(self, tool: str, output: str, meta: object = None) -> None:
+            del tool, meta
+            recorded.append(output)
+
+    client = SwagMCPClient(
+        [MCPServerSpec(name="demo", command="unused")],
+        policy=DefaultPermissionPolicy(AutonomyLevel.AUTO),
+        opener=in_memory_connector({"demo": server}),
+        taint=_Tracker(),  # type: ignore[arg-type]
+    )
+    assert client.call_tool("demo__echo", {"text": "hi"}) == "hi|"
+    assert calls["n"] == 1
+    assert recorded == ["hi|"]
