@@ -60,6 +60,44 @@ python -m pip install "swag-bot[sandbox] @ git+https://github.com/vishnu-Swagan/
 installs the Docker SDK, used when the `docker` CLI is not on `PATH`. A
 checkout for development is `python -m pip install -e ".[dev]"`.
 
+## One command
+
+From a checkout, this installs uv after asking, installs Swag Bot, picks a
+model, and runs the task. It asks again before downloading a model.
+
+```bash
+sh scripts/install.sh -- run "Summarize the files in this directory"
+```
+
+`--dry-run` prints the commands and changes nothing. `--yes` skips both
+questions. The PowerShell twin is `scripts/install.ps1`.
+
+Without cloning, uv can install from Git and run one task:
+
+```bash
+uvx --from 'swag-bot[models] @ git+https://github.com/vishnu-Swagan/swag-bot' swag-bot run "Summarize the files in this directory"
+```
+
+pipx:
+
+```bash
+pipx install "swag-bot[mcp,models] @ git+https://github.com/vishnu-Swagan/swag-bot"
+swag setup --auto
+swag run "Summarize the files in this directory"
+```
+
+`swag setup --auto` uses an API key it finds in the environment
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or
+`OPENROUTER_API_KEY`), or an Ollama model of at least 7B that is already
+installed. Otherwise it offers to pull `qwen2.5:7b` (about 4.7 GB) and waits
+for a yes. It does not install Ollama for you. A 3B model is not selected.
+
+The PyPI project is not published yet. Flip `PYPI_PUBLISHED` in
+`src/swag_bot/onboarding/distribution.py` (and the same flag in the two
+install scripts) after it is. The commands then become `uvx swag-bot run "..."`.
+
+`swag doctor --json` prints `"ready": true` or false and never prints a key.
+
 Swag Bot does not read a `.env` file. Export keys yourself. `.env.example`
 lists the names. `swag doctor` prints `set` or `unset` and never the value.
 
@@ -202,9 +240,43 @@ swag serve-mcp
 swag serve-mcp --http --port 8765
 ```
 
-The server offers `swag_run_task` (run a goal, return the summary) and
-`swag_list_skills` (name and description of discovered skills). Install the
-MCP extra first: `pip install "swag-bot[mcp]"`.
+The server offers `swag_run_task` (run a goal, return the summary),
+`swag_start_task` / `swag_task_status` / `swag_task_result` (the same run,
+polled), `swag_list_skills`, and `swag_setup_status`. Install the MCP extra
+first.
+
+Write and shell actions are not confirmed on the terminal. Stdio is the MCP
+channel, so a prompt there would break the session. A client that supports
+form elicitation gets one question per task. Otherwise the action is denied
+and the tool result says why, unless you preapproved it:
+
+```bash
+swag setup --grant write
+```
+
+Destructive actions stay denied until you grant that risk explicitly.
+`ask-risky` is still the default.
+
+Connect a client with one command or link (`swag install-mcp` prints these):
+
+```bash
+claude mcp add --transport stdio swag -- uvx --from 'swag-bot[mcp] @ git+https://github.com/vishnu-Swagan/swag-bot' swag-bot serve-mcp
+```
+
+Claude Code and Cowork can also install the plugin from this repo:
+
+```bash
+claude plugin marketplace add vishnu-Swagan/swag-bot
+claude plugin install swag-bot@swag-bot
+```
+
+- Cursor: `cursor://anysphere.cursor-deeplink/mcp/install?name=swag&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyItLWZyb20iLCJzd2FnLWJvdFttY3BdIEAgZ2l0K2h0dHBzOi8vZ2l0aHViLmNvbS92aXNobnUtU3dhZ2FuL3N3YWctYm90Iiwic3dhZy1ib3QiLCJzZXJ2ZS1tY3AiXX0%3D`
+- VS Code: `vscode:mcp/install?%7B%22name%22%3A%22swag%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22--from%22%2C%22swag-bot%5Bmcp%5D%20%40%20git%2Bhttps%3A%2F%2Fgithub.com%2Fvishnu-Swagan%2Fswag-bot%22%2C%22swag-bot%22%2C%22serve-mcp%22%5D%7D`
+- Gemini CLI: `gemini extensions install https://github.com/vishnu-Swagan/swag-bot`
+- Claude Desktop: pack `packaging/mcpb` with `npx @anthropic-ai/mcpb pack packaging/mcpb swag-bot.mcpb` and open the `.mcpb` file
+- ChatGPT cannot attach a local stdio server. There is no hosted relay in this repo
+
+The paste-this prompt for an AI chat is [docs/INSTALL_FOR_AGENTS.md](docs/INSTALL_FOR_AGENTS.md). A short index is [llms.txt](llms.txt).
 
 ## Roadmap
 

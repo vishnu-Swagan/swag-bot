@@ -1,4 +1,8 @@
-"""Terminal approval prompt."""
+"""Terminal approval prompt.
+
+Do not use this from ``swag serve-mcp``. Stdout and stdin are the MCP
+channel there. MCP approvals live in ``swag_bot.onboarding.approvals``.
+"""
 
 from __future__ import annotations
 

@@ -27,6 +27,7 @@ from swag_bot.mcp.cli import configure_server
 from swag_bot.mcp.cli import serve as mcp_serve
 from swag_bot.memory.cli import app as memory_app
 from swag_bot.models.cli import app as models_app
+from swag_bot.onboarding.cli import app as onboarding_app
 from swag_bot.plugins.cli import app as plugins_app
 from swag_bot.plugins.cli import skill_app
 from swag_bot.plugins.installer import configure_grant_store
@@ -49,6 +50,7 @@ app.add_typer(safety_app, name="safety")
 app.add_typer(mcp_app, name="mcp")
 app.add_typer(models_app, name="model")
 app.add_typer(memory_app, name="memory")
+app.add_typer(onboarding_app)
 
 # Names only. doctor prints "set" or "unset" and never the value.
 _SECRET_ENV_VARS = (
@@ -87,8 +89,25 @@ def version() -> None:
 
 
 @app.command()
-def doctor() -> None:
+def doctor(
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print a JSON readiness report. No secret values."),
+    ] = False,
+) -> None:
     """Print the active config and which optional dependencies are installed."""
+    if json_output:
+        import json
+
+        from swag_bot.onboarding.status import doctor_report
+
+        try:
+            payload = doctor_report()
+        except ConfigError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
     console = Console(no_color=True, soft_wrap=True)
     path = config_path()
     try:

@@ -1,0 +1,14 @@
+{
+  "name": "swag-bot",
+  "description": "Swag Bot, a local agent you can hand a task to.",
+  "owner": {
+    "name": "Vishnu M"
+  },
+  "plugins": [
+    {
+      "name": "swag-bot",
+      "source": "./plugins/swag-bot",
+      "description": "MCP server and a skill that tells Claude when to delegate a long, verifiable task to Swag Bot."
+    }
+  ]
+}

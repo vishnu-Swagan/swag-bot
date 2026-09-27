@@ -1,0 +1,25 @@
+# Swag Bot
+
+> MIT-licensed local agent. One shell command installs it and runs a task. One prompt connects it over MCP (`swag serve-mcp`).
+
+Swag Bot is not on PyPI yet. Install from Git until `PYPI_PUBLISHED` in `src/swag_bot/onboarding/distribution.py` is true. The install scripts repeat that flag.
+
+## Run a task
+
+- Checkout: `sh scripts/install.sh -- run "Summarize the files in this directory"`
+- uv, no clone: `uvx --from 'swag-bot[models] @ git+https://github.com/vishnu-Swagan/swag-bot' swag-bot run "Summarize the files in this directory"`
+- pipx: `pipx install "swag-bot[mcp,models] @ git+https://github.com/vishnu-Swagan/swag-bot"` then `swag setup --auto`
+- Setup asks before pulling `qwen2.5:7b` (about 4.7 GB). It does not install Ollama or any other system package. A 3B model is not used.
+- Readiness: `swag doctor --json` includes `"ready"` and never prints API keys.
+
+## Connect from a chat
+
+- Claude Code: `claude mcp add --transport stdio swag -- uvx --from 'swag-bot[mcp] @ git+https://github.com/vishnu-Swagan/swag-bot' swag-bot serve-mcp`
+- Claude / Cowork plugin: `claude plugin marketplace add vishnu-Swagan/swag-bot` then `claude plugin install swag-bot@swag-bot`
+- Cursor: `cursor://anysphere.cursor-deeplink/mcp/install?name=swag&config=eyJjb21tYW5kIjoidXZ4IiwiYXJncyI6WyItLWZyb20iLCJzd2FnLWJvdFttY3BdIEAgZ2l0K2h0dHBzOi8vZ2l0aHViLmNvbS92aXNobnUtU3dhZ2FuL3N3YWctYm90Iiwic3dhZy1ib3QiLCJzZXJ2ZS1tY3AiXX0%3D`
+- VS Code: `vscode:mcp/install?%7B%22name%22%3A%22swag%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22--from%22%2C%22swag-bot%5Bmcp%5D%20%40%20git%2Bhttps%3A%2F%2Fgithub.com%2Fvishnu-Swagan%2Fswag-bot%22%2C%22swag-bot%22%2C%22serve-mcp%22%5D%7D`
+- Gemini CLI: `gemini extensions install https://github.com/vishnu-Swagan/swag-bot`
+- Claude Desktop: pack `packaging/mcpb` (`npx @anthropic-ai/mcpb pack packaging/mcpb swag-bot.mcpb`) and open the `.mcpb` file
+- ChatGPT cannot attach a local stdio server. This repo does not ship a hosted relay.
+
+Approvals travel over MCP elicitation. They are not read from stdin. Details: [docs/INSTALL_FOR_AGENTS.md](docs/INSTALL_FOR_AGENTS.md)

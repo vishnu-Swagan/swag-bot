@@ -1,0 +1,45 @@
+{
+  "manifest_version": "0.4",
+  "name": "swag-bot",
+  "display_name": "Swag Bot",
+  "version": "0.1.0",
+  "description": "Run a Swag Bot task from Claude Desktop.",
+  "author": {
+    "name": "Vishnu M",
+    "url": "https://github.com/vishnu-Swagan/swag-bot"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vishnu-Swagan/swag-bot.git"
+  },
+  "server": {
+    "type": "uv",
+    "entry_point": "src/server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "${__dirname}",
+        "python",
+        "${__dirname}/src/server.py"
+      ]
+    }
+  },
+  "tools_generated": true,
+  "keywords": [
+    "agent",
+    "swag-bot"
+  ],
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "python": ">=3.11"
+    }
+  }
+}

@@ -90,6 +90,9 @@ def run(
     ] = "python",
 ) -> None:
     """Plan, do, and verify a multi-step task."""
+    from swag_bot.onboarding.setup import first_run_if_needed
+
+    first_run_if_needed(announce=typer.echo)
     if not goal.strip():
         typer.echo("goal must not be empty", err=True)
         raise typer.Exit(code=1)
@@ -156,6 +159,7 @@ def execute_goal(
     on_event: Callable[[LoopEvent], None] | None = None,
     announce: Callable[[str], None] | None = None,
     settings: Settings | None = None,
+    prompter: ApprovalPrompter | None = None,
 ) -> GoalResult:
     """Run one goal with the configured model, sandbox, policy, tools, and memory.
 
@@ -182,12 +186,12 @@ def execute_goal(
     sandbox = _sandbox(active, destination)
     memory = _memory(active)
     policy = _policy(active, destination)
-    prompter = _prompter(active)
+    active_prompter = prompter if prompter is not None else _prompter(active)
     plugins = _plugins(active)
 
     tools = InMemoryToolRegistry()
     register_builtin_tools(tools, sandbox)
-    mcp_client = _attach_mcp_tools(tools, active, policy, prompter, plugins)
+    mcp_client = _attach_mcp_tools(tools, active, policy, active_prompter, plugins)
     context = _planner_context(goal, memory, plugins)
 
     try:
@@ -196,7 +200,7 @@ def execute_goal(
             sandbox=sandbox,
             memory=memory,
             policy=policy,
-            prompter=prompter,
+            prompter=active_prompter,
             tools=tools,
             model=active.model.model,
             max_steps=max_steps,
@@ -233,10 +237,13 @@ def execute_goal(
 def mcp_task_runner(goal: str) -> str:
     """Run a goal for ``swag serve-mcp`` and return the summary text.
 
-    Stdout stays quiet so it does not corrupt a stdio MCP session.
+    The prompter is the one bound for this MCP request. It never reads stdin
+    or writes stdout, because those streams are the stdio protocol channel.
     """
+    from swag_bot.onboarding.approvals import current_mcp_prompter
+
     try:
-        return execute_goal(goal).summary
+        return execute_goal(goal, prompter=current_mcp_prompter()).summary
     except SwagError as exc:
         return str(exc)
 

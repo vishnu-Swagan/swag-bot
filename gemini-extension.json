@@ -1,0 +1,16 @@
+{
+  "name": "swag-bot",
+  "version": "0.1.0",
+  "description": "Hand long, checkable tasks to Swag Bot over MCP.",
+  "mcpServers": {
+    "swag": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "swag-bot[mcp] @ git+https://github.com/vishnu-Swagan/swag-bot",
+        "swag-bot",
+        "serve-mcp"
+      ]
+    }
+  }
+}
