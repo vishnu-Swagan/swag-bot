@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 from swag_bot.cli import app
 from swag_bot.interfaces import ActionKind, ActionLogEntry, ActionRequest, AutonomyLevel, RiskLevel
 from swag_bot.safety.log import ActionLog
+from tests.cli_output import visible
 
 runner = CliRunner()
 
@@ -14,22 +15,24 @@ runner = CliRunner()
 def test_policy_prints_autonomy_and_rules() -> None:
     result = runner.invoke(app, ["safety", "policy"])
     assert result.exit_code == 0
-    assert "ask-risky" in result.output
-    assert "destructive" in result.output.lower()
-    assert "plugin grants" in result.output
+    text = visible(result)
+    assert "ask-risky" in text
+    assert "destructive" in text.lower()
+    assert "plugin grants" in text
 
 
 def test_grant_shows_up_in_policy_and_log_is_empty() -> None:
     granted = runner.invoke(app, ["safety", "grant", "files", "filesystem.read"])
     assert granted.exit_code == 0
     policy = runner.invoke(app, ["safety", "policy"])
-    assert "files" in policy.output
-    assert "filesystem.read" in policy.output
+    shown = visible(policy)
+    assert "files" in shown
+    assert "filesystem.read" in shown
     revoked = runner.invoke(app, ["safety", "revoke", "files", "filesystem.read"])
     assert revoked.exit_code == 0
     empty = runner.invoke(app, ["safety", "log"])
     assert empty.exit_code == 0
-    assert "No actions logged" in empty.output
+    assert "No actions logged" in visible(empty)
 
 
 def test_log_prints_entries() -> None:
@@ -47,5 +50,6 @@ def test_log_prints_entries() -> None:
     )
     result = runner.invoke(app, ["safety", "log"])
     assert result.exit_code == 0
-    assert "read notes" in result.output
-    assert "policy" in result.output
+    text = visible(result)
+    assert "read notes" in text
+    assert "policy" in text

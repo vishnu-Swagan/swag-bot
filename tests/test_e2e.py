@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 from swag_bot.cli import app
 from swag_bot.config import Settings, save_settings
 from swag_bot.memory import get_memory_store
+from tests.cli_output import visible as _visible
 from tests.core.support import plan_json, verdict
 from tests.fakes import FakeLLMClient
 from tests.plugins.helpers import write_plugin
@@ -55,13 +56,6 @@ _COMMANDS = (
     ["memory", "list"],
     ["memory", "forget", "--help"],
 )
-
-
-def _visible(result: object) -> str:
-    stdout = getattr(result, "stdout", "") or ""
-    stderr = getattr(result, "stderr", "") or ""
-    output = getattr(result, "output", "") or ""
-    return f"{stdout}\n{stderr}\n{output}"
 
 
 def test_every_command_responds() -> None:

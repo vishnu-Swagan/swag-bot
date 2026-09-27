@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from swag_bot import __version__
 from swag_bot.cli import app
+from tests.cli_output import visible as _visible
 
 runner = CliRunner()
 
@@ -27,27 +28,30 @@ def test_help_lists_subcommands() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     for name in _HELP_COMMANDS:
-        assert name in result.output
+        assert name in _visible(result)
 
 
 def test_version() -> None:
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
-    assert __version__ in result.output
+    assert __version__ in _visible(result)
 
 
 def test_run_help() -> None:
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
-    assert "--dry-run" in result.output
-    assert "goal" in result.output.lower()
+    text = _visible(result)
+    assert "--dry-run" in text
+    assert "goal" in text.lower()
+    assert "\x1b" not in text
 
 
 def test_plugin_help() -> None:
     result = runner.invoke(app, ["plugin", "--help"])
     assert result.exit_code == 0
-    assert "list" in result.output
-    assert "validate" in result.output
+    text = _visible(result)
+    assert "list" in text
+    assert "validate" in text
 
 
 def test_serve_mcp_help() -> None:
@@ -55,14 +59,8 @@ def test_serve_mcp_help() -> None:
     assert result.exit_code == 0
     text = _visible(result).lower()
     assert "stdio" in text
-    assert "--http" in result.output
-
-
-def _visible(result: object) -> str:
-    stdout = getattr(result, "stdout", "") or ""
-    stderr = getattr(result, "stderr", "") or ""
-    output = getattr(result, "output", "") or ""
-    return f"{stdout}\n{stderr}\n{output}"
+    assert "--http" in text
+    assert "\x1b" not in text
 
 
 def test_doctor_hides_secrets(monkeypatch: pytest.MonkeyPatch) -> None:

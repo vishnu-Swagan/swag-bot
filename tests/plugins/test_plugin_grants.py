@@ -21,6 +21,7 @@ from swag_bot.safety.policy import (
     load_grants,
     load_suspended_grants,
 )
+from tests.cli_output import visible as _visible
 from tests.fakes import AutoApprovePrompter
 from tests.plugins.helpers import write_plugin
 
@@ -50,13 +51,6 @@ class RecordingStore:
 
     def revoke(self, plugin: str) -> None:
         self.events.append(f"revoke:{plugin}")
-
-
-def _visible(result: object) -> str:
-    stdout = getattr(result, "stdout", "") or ""
-    stderr = getattr(result, "stderr", "") or ""
-    output = getattr(result, "output", "") or ""
-    return f"{stdout}\n{stderr}\n{output}"
 
 
 def _source(tmp_path: Path, *, default_enabled: bool = True) -> Path:

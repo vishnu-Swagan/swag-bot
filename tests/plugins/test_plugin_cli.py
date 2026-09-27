@@ -8,24 +8,18 @@ import pytest
 from typer.testing import CliRunner
 
 from swag_bot.cli import app
+from tests.cli_output import visible as _visible
 from tests.plugins.helpers import write_plugin, write_skill
 
 runner = CliRunner()
 EXAMPLE = Path(__file__).resolve().parents[2] / "plugins" / "example-github-helper"
 
 
-def _visible(result: object) -> str:
-    stdout = getattr(result, "stdout", "") or ""
-    stderr = getattr(result, "stderr", "") or ""
-    output = getattr(result, "output", "") or ""
-    return f"{stdout}\n{stderr}\n{output}"
-
-
 def test_plugin_help_lists_management_commands() -> None:
     result = runner.invoke(app, ["plugin", "--help"])
     assert result.exit_code == 0
     for name in ("install", "list", "enable", "disable", "remove", "info", "show", "validate"):
-        assert name in result.output
+        assert name in _visible(result)
 
 
 def test_validate_example_plugin() -> None:

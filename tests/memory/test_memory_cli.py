@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 from swag_bot.cli import app
 from swag_bot.config import MemorySettings, Settings, save_settings
 from swag_bot.memory.errors import MemoryError
+from tests.cli_output import visible
 
 runner = CliRunner()
 
@@ -20,29 +21,30 @@ def json_backend() -> None:
 def test_add_search_list_forget(json_backend: None) -> None:
     added = runner.invoke(app, ["memory", "add", "ship the release", "--tag", "release"])
     assert added.exit_code == 0
-    item_id = added.output.strip()
+    item_id = visible(added).strip()
     assert item_id
 
     found = runner.invoke(app, ["memory", "search", "release"])
     assert found.exit_code == 0
-    assert item_id in found.output
-    assert "ship the release" in found.output
-    assert "tags=release" in found.output
+    found_text = visible(found)
+    assert item_id in found_text
+    assert "ship the release" in found_text
+    assert "tags=release" in found_text
 
     listed = runner.invoke(app, ["memory", "list"])
     assert listed.exit_code == 0
-    assert item_id in listed.output
+    assert item_id in visible(listed)
 
     empty = runner.invoke(app, ["memory", "search", "   "])
     assert empty.exit_code == 0
-    assert "no matches" in empty.output
+    assert "no matches" in visible(empty)
 
     forgotten = runner.invoke(app, ["memory", "forget", item_id])
     assert forgotten.exit_code == 0
-    assert f"forgot {item_id}" in forgotten.output
+    assert f"forgot {item_id}" in visible(forgotten)
     missing = runner.invoke(app, ["memory", "forget", item_id])
     assert missing.exit_code == 1
-    assert f"no memory {item_id}" in missing.output
+    assert f"no memory {item_id}" in visible(missing)
 
 
 def test_error_redacts_agentmemory_secret(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -54,5 +56,6 @@ def test_error_redacts_agentmemory_secret(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr("swag_bot.memory.cli.get_memory_store", boom)
     result = runner.invoke(app, ["memory", "search", "hello"])
     assert result.exit_code == 1
-    assert "test-agentmemory-secret" not in result.output
-    assert "$AGENTMEMORY_SECRET" in result.output
+    text = visible(result)
+    assert "test-agentmemory-secret" not in text
+    assert "$AGENTMEMORY_SECRET" in text

@@ -10,6 +10,7 @@ from swag_bot.config import load_settings
 from swag_bot.models.cli import render_provider_report
 from swag_bot.models.errors import ModelError
 from swag_bot.models.keys import key_status
+from tests.cli_output import visible
 
 runner = CliRunner()
 
@@ -52,7 +53,7 @@ def test_unset_keys_and_unreachable_ollama(monkeypatch: pytest.MonkeyPatch) -> N
     )
     result = runner.invoke(app, ["model", "list"])
     assert result.exit_code == 0
-    text = result.output
+    text = visible(result)
     assert "OPENAI_API_KEY=unset" in text
     assert "ANTHROPIC_API_KEY=unset" in text
     assert "models: unreachable" in text
@@ -83,7 +84,7 @@ def test_model_test_sends_one_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("swag_bot.models.cli.get_llm_client", lambda config: scripted)
     result = runner.invoke(app, ["model", "test"])
     assert result.exit_code == 0
-    assert result.output.strip() == "ok"
+    assert visible(result).strip() == "ok"
     assert scripted.prompts == ["Reply with the single word: ok"]
 
 
@@ -96,5 +97,6 @@ def test_model_test_redacts_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("swag_bot.models.cli.get_llm_client", boom)
     result = runner.invoke(app, ["model", "test", "hi"])
     assert result.exit_code == 1
-    assert "sk-test-openai-secret" not in result.output
-    assert "$OPENAI_API_KEY" in result.output
+    text = visible(result)
+    assert "sk-test-openai-secret" not in text
+    assert "$OPENAI_API_KEY" in text

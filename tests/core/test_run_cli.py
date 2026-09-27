@@ -10,17 +10,11 @@ from typer.testing import CliRunner
 
 from swag_bot.cli import app
 from swag_bot.interfaces import ChatResponse, Message, ToolCall
+from tests.cli_output import visible as _visible
 from tests.core.support import DenyPrompter, plan_json, verdict
 from tests.fakes import FakeLLMClient
 
 runner = CliRunner()
-
-
-def _visible(result: object) -> str:
-    stdout = getattr(result, "stdout", "") or ""
-    stderr = getattr(result, "stderr", "") or ""
-    output = getattr(result, "output", "") or ""
-    return f"{stdout}\n{stderr}\n{output}"
 
 
 def _write_plan() -> str:
@@ -39,8 +33,10 @@ def _write_plan() -> str:
 def test_help_lists_run_options() -> None:
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
+    text = _visible(result)
+    assert "\x1b" not in text
     for name in ("--autonomy", "--model", "--output-dir", "--max-steps", "--dry-run"):
-        assert name in result.output
+        assert name in text
 
 
 def test_model_errors_exit_1(monkeypatch: pytest.MonkeyPatch) -> None:
