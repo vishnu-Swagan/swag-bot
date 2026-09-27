@@ -102,7 +102,7 @@ export const DOCS: readonly DocArticle[] = [
       },
       {
         type: "p",
-        text: "Local runs stay on your hardware. swag setup --auto probes a server that is already running. It does not install LM Studio, Jan, llama.cpp, llamafile, or GPT4All. The default base URLs in docs/MODELS.md are localhost:1234 (LM Studio), localhost:1337 (Jan), localhost:8080 (llama.cpp and llamafile), and localhost:4891 (GPT4All). Ollama uses http://127.0.0.1:11434.",
+        text: "Local runs stay on your hardware. swag setup --auto probes a server that is already running. It does not install LM Studio, Jan, llama.cpp, llamafile, or GPT4All. The default base URLs in docs/MODELS.md are http://localhost:1234/v1 (LM Studio), http://localhost:1337/v1 (Jan), http://localhost:8080/v1 (llama.cpp and llamafile), and http://localhost:4891/v1 (GPT4All). Ollama uses http://127.0.0.1:11434.",
       },
       { type: "h", text: "Free cloud plans" },
       {
