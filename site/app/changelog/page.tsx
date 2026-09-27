@@ -5,7 +5,7 @@ import Link from "next/link";
 
 export const metadata = pageMeta(
   "Changelog",
-  "Swag Bot 0.1.0 is the tagged release in the repository. The v0.2 capabilities are the surface this site describes.",
+  "Swag Bot v0.2 is on main. A tagged release is coming. 0.1.0 is the previous tagged release.",
   "/changelog",
 );
 
@@ -14,14 +14,14 @@ export default function ChangelogPage() {
     <article>
       <PageHeader
         eyebrow="Changelog"
-        title="What is tagged, and what this site describes"
-        lede="The notes for 0.1.0 are copied from the repository changelog. v0.2 is the product surface documented on this site. This page does not invent a git tag that the changelog does not list."
+        title="v0.2 is on main"
+        lede="The ten capabilities below are in the main branch. A tagged release is coming. 0.1.0 remains the previous tagged release."
         crumbs={[{ label: "Changelog" }]}
       />
       <div className="mx-auto grid w-full max-w-3xl gap-10 px-4 pb-20 md:px-6">
         <section>
-          <h2 className="text-2xl font-semibold tracking-tight">0.2</h2>
-          <p className="mt-2 text-sm text-faint">Documented on this site. Not a tagged release in CHANGELOG.md.</p>
+          <h2 className="text-2xl font-semibold tracking-tight">0.2.0</h2>
+          <p className="mt-2 text-sm text-faint">On main as of the 0.2 integration. Not tagged yet. A tagged release is coming. The package version in the tree is still 0.1.0 until that tag.</p>
           <ul className="mt-4 grid gap-2">
             {FEATURES.map((feature) => (
               <li key={feature.slug}>

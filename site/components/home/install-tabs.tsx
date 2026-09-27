@@ -52,8 +52,13 @@ export function InstallTabs() {
         aria-labelledby={`install-tab-${current.id}`}
         className="mt-3 flex flex-col gap-3 rounded-2xl border border-line bg-elev p-3 sm:flex-row sm:items-center"
       >
-        <code className="min-w-0 flex-1 overflow-x-auto px-2 font-mono text-sm">{current.command}</code>
-        <CopyButton text={current.command} />
+        <div className="min-w-0 flex-1 px-2">
+          {current.comingSoon ? (
+            <p className="font-mono text-xs text-warn">Coming soon. PyPI is not published, so this does not install Swag Bot yet.</p>
+          ) : null}
+          <code className="mt-1 block overflow-x-auto font-mono text-sm">{current.command}</code>
+        </div>
+        {current.comingSoon ? null : <CopyButton text={current.command} />}
       </div>
     </div>
   );

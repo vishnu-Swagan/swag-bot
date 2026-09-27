@@ -30,7 +30,7 @@ export function Safety() {
   const items = [
     {
       title: "Undo ledger",
-      body: "State-changing actions are recorded so a run can be walked back from the ledger instead of from memory.",
+      body: "swag undo restores the latest run, including files a shell command changed. swag undo --to STEP restores the start of that step. Irreversible actions are listed and are not restored.",
     },
     {
       title: "Taint firewall",

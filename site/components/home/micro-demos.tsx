@@ -20,7 +20,7 @@ export function MicroDemo({ kind }: { kind: DemoKind }) {
     );
   }
   if (kind === "install") {
-    return <p className="font-mono text-xs leading-5">curl …/install.sh | bash</p>;
+    return <p className="font-mono text-xs leading-5">curl …/scripts/install.sh | sh</p>;
   }
   if (kind === "harness") {
     return (

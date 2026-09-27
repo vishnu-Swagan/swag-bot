@@ -34,7 +34,7 @@ export default function PrivacyPage() {
         If you choose a cloud model provider, including the free plans for Gemini, Groq, OpenRouter, Cerebras, and Mistral, that provider receives the prompts you send. Their terms and privacy policies govern that processing. Local runtimes — Ollama, LM Studio, Jan, llama.cpp/llamafile, and GPT4All — keep the model call on your machine.
       </p>
       <p>
-        swag doctor prints whether known API key variables are set or unset. It does not print the key. The action log and run bundles redact secrets.
+        swag doctor and swag model list print set or unset for OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, and OPENROUTER_API_KEY. They do not print the key. swag doctor --json reports readiness and does not include a secret. The action log and run bundles redact secrets.
       </p>
       <H2>Hosting</H2>
       <p>

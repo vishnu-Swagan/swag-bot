@@ -2,7 +2,7 @@
 
 import { InstallTabs } from "@/components/home/install-tabs";
 import { Terminal } from "@/components/home/terminal";
-import { GITHUB_URL, PRODUCT, RELEASES_URL, RELEASE_010_URL } from "@/lib/site";
+import { GITHUB_URL, PRODUCT, RELEASES_URL } from "@/lib/site";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -68,11 +68,7 @@ export function Hero() {
             </a>
           </div>
           <p className="mt-4 text-sm text-faint">
-            The tagged release in the repository changelog is{" "}
-            <a className="link" href={RELEASE_010_URL}>
-              0.1.0
-            </a>
-            . The ten capabilities on this site are the v{PRODUCT.versionLabel} surface.
+            v{PRODUCT.versionLabel} is on main. A tagged release is coming.
           </p>
         </div>
         <Terminal />

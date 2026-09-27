@@ -42,26 +42,29 @@ export const INSTALL = {
     id: "unix",
     label: "macOS / Linux",
     command:
-      "curl -fsSL https://raw.githubusercontent.com/vishnu-Swagan/swag-bot/main/install.sh | bash",
+      "curl -fsSL https://raw.githubusercontent.com/vishnu-Swagan/swag-bot/main/scripts/install.sh | sh",
+    comingSoon: false,
   },
   windows: {
     id: "windows",
     label: "Windows",
     command:
-      "irm https://raw.githubusercontent.com/vishnu-Swagan/swag-bot/main/install.ps1 | iex",
+      "irm https://raw.githubusercontent.com/vishnu-Swagan/swag-bot/main/scripts/install.ps1 | iex",
+    comingSoon: false,
   },
   pip: {
     id: "pip",
-    label: "pip",
+    label: "pip · coming soon",
     command: "pip install swag-bot",
+    comingSoon: true,
   },
 } as const;
 
 export const INSTALL_TABS = [INSTALL.unix, INSTALL.windows, INSTALL.pip] as const;
 
-/** Pinned git install documented in the repository README for the tagged release. */
+/** Git install used by the install scripts until PyPI publishing is turned on. */
 export const GIT_INSTALL =
-  'python -m pip install "swag-bot @ git+https://github.com/vishnu-Swagan/swag-bot.git@v0.1.0"';
+  'uv tool install "swag-bot[mcp,models] @ git+https://github.com/vishnu-Swagan/swag-bot"';
 
 export const NAV = [
   { href: "/features", label: "Features" },
@@ -124,10 +127,10 @@ export const FEATURES: readonly Feature[] = [
     index: "03",
     title: "One-command install and setup",
     summary: "One command installs the swag CLI and sets it up.",
-    fact: "The install bar on this site copies the shell script, the PowerShell script, or pip install swag-bot.",
+    fact: "scripts/install.sh and scripts/install.ps1 install from Git, then run swag setup --auto. pip install swag-bot is not on PyPI yet.",
     body: [
-      "macOS and Linux use install.sh. Windows uses install.ps1. Python users can pip install swag-bot.",
-      "The repository README also documents a pinned git install for the tagged 0.1.0 release, for anyone who wants that exact tree.",
+      "macOS and Linux use scripts/install.sh. Windows uses scripts/install.ps1. The script asks before it installs uv, then runs swag setup --auto.",
+      "pip install swag-bot is the command once PyPI publishing is on. It does not work today. The install scripts install from Git instead.",
     ],
     demo: "install",
   },
@@ -225,32 +228,32 @@ export const LOCAL_MODELS = [
   {
     id: "ollama",
     name: "Ollama",
-    note: "Default local runtime in the repository. No API key. The fib run used qwen2.5:3b.",
-    command: "swag model set ollama/qwen2.5:3b",
+    note: "Default provider. No API key. swag setup --auto uses an installed Ollama tag of at least 7B, or asks before pulling qwen2.5:7b. The fib run used qwen2.5:3b.",
+    command: "swag setup --auto",
   },
   {
     id: "lm-studio",
     name: "LM Studio",
-    note: "Local server on your machine. The model call stays on hardware you control.",
-    command: null,
+    note: "Local OpenAI-compatible server. Prompts stay on this machine. Default base URL in docs/MODELS.md is http://localhost:1234/v1.",
+    command: "swag setup --auto --base-url http://localhost:1234/v1",
   },
   {
     id: "jan",
     name: "Jan",
-    note: "Local app. Same idea: the model runs beside you, not on a metered API.",
-    command: null,
+    note: "Local server. docs/MODELS.md lists http://localhost:1337/v1.",
+    command: "swag setup --auto --base-url http://localhost:1337/v1",
   },
   {
     id: "llama-cpp",
     name: "llama.cpp / llamafile",
-    note: "Local inference through llama.cpp or a llamafile.",
-    command: null,
+    note: "docs/MODELS.md lists both at http://localhost:8080/v1.",
+    command: "swag setup --auto --base-url http://localhost:8080/v1",
   },
   {
     id: "gpt4all",
     name: "GPT4All",
-    note: "Local runtime for machines that already use GPT4All.",
-    command: null,
+    note: "Local API server. docs/MODELS.md lists http://localhost:4891/v1.",
+    command: "swag setup --auto --base-url http://localhost:4891/v1",
   },
 ] as const;
 
@@ -258,32 +261,32 @@ export const CLOUD_MODELS = [
   {
     id: "gemini",
     name: "Gemini",
-    note: "Free cloud plan. Prompts you send are processed by Google under Gemini's terms.",
-    command: "swag model set gemini/<model>",
+    note: "Free cloud plan. Setup stores GEMINI_API_KEY and uses gemini-2.5-flash. Prompts go to Google under Gemini's terms.",
+    command: "swag model set gemini/gemini-2.5-flash",
   },
   {
     id: "groq",
     name: "Groq",
-    note: "Free cloud plan. Prompts leave your machine and are governed by Groq's terms.",
-    command: null,
+    note: "Free cloud plan through LiteLLM. The model string in docs/MODELS.md is groq/llama-3.3-70b-versatile. Prompts leave your machine.",
+    command: "swag model set litellm/groq/llama-3.3-70b-versatile",
   },
   {
     id: "openrouter",
     name: "OpenRouter",
-    note: "Free cloud plan and a router to other models. The repository client knows this provider.",
-    command: "swag model set openrouter/<author>/<model>",
+    note: "Free router. docs/MODELS.md uses openrouter/free and OPENROUTER_API_KEY.",
+    command: "swag model set openrouter/openrouter/free",
   },
   {
     id: "cerebras",
     name: "Cerebras",
-    note: "Free cloud plan. Prompts you send are processed under Cerebras's terms.",
-    command: null,
+    note: "Free cloud plan through LiteLLM. docs/MODELS.md lists cerebras/gpt-oss-120b.",
+    command: "swag model set litellm/cerebras/gpt-oss-120b",
   },
   {
     id: "mistral",
     name: "Mistral",
-    note: "Free cloud plan. Prompts you send are processed under Mistral's terms.",
-    command: null,
+    note: "Free cloud plan through LiteLLM. docs/MODELS.md lists mistral/mistral-small-latest.",
+    command: "swag model set litellm/mistral/mistral-small-latest",
   },
 ] as const;
 
