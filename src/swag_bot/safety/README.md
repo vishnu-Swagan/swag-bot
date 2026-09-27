@@ -22,4 +22,4 @@ The narrow exception is the `serve-mcp` wrapper in `src/swag_bot/cli.py`: update
 
 ## Status
 
-Stub. The commands exit 2.
+Implemented. See `docs/SAFETY.md`.

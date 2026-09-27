@@ -18,4 +18,4 @@ The `mcp` Python package is an optional extra (`pip install -e ".[mcp]"`). Do no
 
 ## Status
 
-Stub. `swag serve-mcp` and `swag mcp tools` exit 2.
+Implemented. See `docs/SAFETY.md`.

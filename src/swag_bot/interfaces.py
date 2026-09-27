@@ -810,7 +810,9 @@ class MCPServerSpec(BaseModel):
     """One server from a plugin ``.mcp.json`` ``mcpServers`` map.
 
     ``transport`` is ``stdio`` when ``command`` is set, or ``http`` / ``sse``
-    / ``ws`` when ``url`` is set. The mcp agent owns the real client.
+    / ``ws`` when ``url`` is set. ``headers`` is for streamable HTTP (values
+    may still contain ``${VAR}`` placeholders; the client substitutes them).
+    The mcp agent owns the real client.
     """
 
     name: str
@@ -818,6 +820,7 @@ class MCPServerSpec(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     url: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
     transport: str = "stdio"
 
 

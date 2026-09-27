@@ -49,10 +49,12 @@ def test_plugin_help() -> None:
     assert "validate" in result.output
 
 
-def test_serve_mcp_stub_exits() -> None:
-    result = runner.invoke(app, ["serve-mcp"])
-    assert result.exit_code == 2
-    assert "not implemented" in _visible(result).lower()
+def test_serve_mcp_help() -> None:
+    result = runner.invoke(app, ["serve-mcp", "--help"])
+    assert result.exit_code == 0
+    text = _visible(result).lower()
+    assert "stdio" in text
+    assert "--http" in result.output
 
 
 def _visible(result: object) -> str:

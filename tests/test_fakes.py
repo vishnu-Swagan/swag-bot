@@ -95,14 +95,20 @@ def test_factories_and_loop_are_stubs(tmp_path: Path) -> None:
     for factory in (
         build_llm_client,
         build_memory_store,
-        build_sandbox,
-        build_permission_policy,
-        build_prompter,
-        build_mcp_client,
         discover_plugins,
     ):
         with pytest.raises(NotImplementedYet):
             factory(settings)
+    sandbox = build_sandbox(settings)
+    assert sandbox.workdir.is_dir()
+    policy = build_permission_policy(settings)
+    assert policy.autonomy is AutonomyLevel.ASK_RISKY
+    prompter = build_prompter(settings)
+    assert callable(prompter.prompt)
+    client = build_mcp_client(settings)
+    assert client.list_tools() == []
+    client.close()
+    client.close()
     with pytest.raises(NotImplementedYet):
         load_plugin(tmp_path)
 

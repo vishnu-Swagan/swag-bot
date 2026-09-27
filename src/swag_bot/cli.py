@@ -60,11 +60,15 @@ _OPTIONAL_BINARIES = ("docker", "ollama")
 
 @app.command("serve-mcp")
 def serve_mcp(
-    host: Annotated[str, typer.Option(help="Bind address.")] = "127.0.0.1",
-    port: Annotated[int, typer.Option(help="Bind port.")] = 8765,
+    host: Annotated[str, typer.Option(help="Bind address when using HTTP.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Bind port when using HTTP.")] = 8765,
+    http: Annotated[
+        bool,
+        typer.Option("--http", help="Serve streamable HTTP instead of stdio."),
+    ] = False,
 ) -> None:
-    """Expose Swag Bot as an MCP server."""
-    mcp_serve(host=host, port=port)
+    """Expose Swag Bot as an MCP server. Stdio is the default."""
+    mcp_serve(host=host, port=port, http=http)
 
 
 @app.command()
