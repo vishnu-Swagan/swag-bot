@@ -23,6 +23,9 @@ Example ``config.toml``::
     image = "python:3.12-slim"
     network = false
 
+    [evidence]
+    enabled = true
+
 Known ``model.provider`` values: ``ollama`` (default), ``litellm``,
 ``openai``, ``anthropic``. The string is open so a new provider does not
 require a schema change. ``memory.backend`` defaults to ``memory``, which
@@ -96,6 +99,18 @@ class SandboxSettings(BaseModel):
     network: bool = False
 
 
+class EvidenceSettings(BaseModel):
+    """Evidence ledger and execution-grounded checks.
+
+    ``enabled`` is the default. Set it to false to judge a step from the
+    model's text alone (the behavior from before the evidence ledger).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = True
+
+
 class Settings(BaseModel):
     """Top-level ``config.toml``. Unknown keys are ignored so new fields can land later."""
 
@@ -106,6 +121,7 @@ class Settings(BaseModel):
     plugin_dirs: list[str] = Field(default_factory=list)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
+    evidence: EvidenceSettings = Field(default_factory=EvidenceSettings)
 
 
 def swag_home() -> Path:

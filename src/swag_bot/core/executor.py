@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from typing import Any
 
+from swag_bot.core.evidence import EvidenceLedger
 from swag_bot.core.memory_journal import label_memory
 from swag_bot.core.prompts import EXECUTOR_SYSTEM
 from swag_bot.core.redact import redact, redact_known
@@ -39,6 +42,10 @@ _KIND = {
 OnAction = Callable[[ActionLogEntry], None]
 OnTool = Callable[[str], None]
 
+# Which step the shared executor is running. Set inside ``execute`` so parallel
+# steps do not overwrite each other's id.
+_current_step: ContextVar[str] = ContextVar("swag_executor_step", default="")
+
 
 class StepExecutor:
     """Execute a single step with the injected model, tools, and policy."""
@@ -56,6 +63,7 @@ class StepExecutor:
         on_action: OnAction | None = None,
         on_tool: OnTool | None = None,
         memory_mode: str = "auto",
+        ledger: EvidenceLedger | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -67,6 +75,7 @@ class StepExecutor:
         self.on_action = on_action
         self.on_tool = on_tool
         self.memory_mode = memory_mode
+        self.ledger = ledger
 
     def execute(
         self,
@@ -77,6 +86,20 @@ class StepExecutor:
         handoff: str = "",
     ) -> StepResult:
         """Run ``step`` once. ``handoff`` is text from the steps this one depends on."""
+        token = _current_step.set(step.id)
+        try:
+            return self._execute(step, attempt=attempt, feedback=feedback, handoff=handoff)
+        finally:
+            _current_step.reset(token)
+
+    def _execute(
+        self,
+        step: Step,
+        *,
+        attempt: int,
+        feedback: str | None,
+        handoff: str,
+    ) -> StepResult:
         tool_specs = list(self.tools.list_tools())
         messages: list[Message] = [
             Message.system(EXECUTOR_SYSTEM),
@@ -133,7 +156,14 @@ class StepExecutor:
             self.tools.get(call.name)
         except KeyError:
             outcome = f"unknown tool: {call.name}"
-            self._record(action, arguments, approved=False, approver="policy", outcome=outcome)
+            self._finish(
+                call,
+                action,
+                arguments,
+                approved=False,
+                approver="policy",
+                outcome=outcome,
+            )
             return outcome
 
         classified = self.policy.classify(action)
@@ -145,7 +175,14 @@ class StepExecutor:
         decision = _policy_decision(self.policy, action)
         if decision == "deny":
             outcome = "denied"
-            self._record(action, arguments, approved=False, approver="policy", outcome=outcome)
+            self._finish(
+                call,
+                action,
+                arguments,
+                approved=False,
+                approver="policy",
+                outcome=outcome,
+            )
             self._emit_tool(f"denied {action.summary}")
             return "Action denied."
         if decision == "prompt":
@@ -160,20 +197,77 @@ class StepExecutor:
 
         if not approved:
             outcome = "denied"
-            self._record(action, arguments, approved=False, approver=approver, outcome=outcome)
+            self._finish(
+                call,
+                action,
+                arguments,
+                approved=False,
+                approver=approver,
+                outcome=outcome,
+            )
             self._emit_tool(f"denied {action.summary}")
             return "Action denied."
 
+        started = time.perf_counter()
         try:
             outcome = self.tools.call(call)
         except Exception as exc:
             outcome = f"error: {exc}"
-            self._record(action, arguments, approved=True, approver=approver, outcome=outcome)
+            self._finish(
+                call,
+                action,
+                arguments,
+                approved=True,
+                approver=approver,
+                outcome=outcome,
+                started=started,
+            )
             self._emit_tool(outcome)
             return outcome
-        self._record(action, arguments, approved=True, approver=approver, outcome=outcome)
+        self._finish(
+            call,
+            action,
+            arguments,
+            approved=True,
+            approver=approver,
+            outcome=outcome,
+            started=started,
+        )
         self._emit_tool(action.summary)
         return outcome
+
+    def _finish(
+        self,
+        call: ToolCall,
+        action: ActionRequest,
+        arguments: dict[str, Any],
+        *,
+        approved: bool,
+        approver: str,
+        outcome: str,
+        started: float | None = None,
+    ) -> None:
+        evidence_id: str | None = None
+        step_id = _current_step.get()
+        if self.ledger is not None and step_id:
+            duration_ms = None if started is None else int((time.perf_counter() - started) * 1000)
+            evidence = self.ledger.record_tool(
+                step_id=step_id,
+                tool=call.name,
+                arguments=arguments,
+                outcome=outcome,
+                approved=approved,
+                duration_ms=duration_ms,
+            )
+            evidence_id = evidence.id
+        self._record(
+            action,
+            arguments,
+            approved=approved,
+            approver=approver,
+            outcome=outcome,
+            evidence_id=evidence_id,
+        )
 
     def _record(
         self,
@@ -183,6 +277,7 @@ class StepExecutor:
         approved: bool,
         approver: str,
         outcome: str,
+        evidence_id: str | None = None,
     ) -> None:
         entry = ActionLogEntry(
             action=action,
@@ -190,6 +285,7 @@ class StepExecutor:
             approved=approved,
             approver=approver,
             outcome=_clip(redact_known(outcome, arguments, action.arguments)),
+            evidence_id=evidence_id,
         )
         if self.on_action is not None:
             self.on_action(entry)
@@ -267,6 +363,11 @@ def _user_prompt(
     if memories:
         lines.append("Related memory:")
         lines.extend(f"- {item}" for item in memories)
+    if step.checks:
+        from swag_bot.core.checks import describe_check
+
+        lines.append("Acceptance checks the harness will run:")
+        lines.extend(f"- {describe_check(check)}" for check in step.checks)
     if feedback:
         lines.append(f"The previous attempt did not pass the check: {feedback}")
         lines.append("Try again.")

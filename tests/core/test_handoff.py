@@ -85,6 +85,13 @@ def test_dependent_step_sees_the_file_and_observation(tmp_path: Path) -> None:
             ),
             "wrote note.txt",
             verdict(True, "file written"),
+            ChatResponse(
+                message=Message.assistant(
+                    tool_calls=[
+                        ToolCall(id="c2", name="read_file", arguments={"path": "note.txt"})
+                    ]
+                )
+            ),
             "used the note",
             verdict(True, "saw the secret"),
             "Both steps finished.",
@@ -94,11 +101,17 @@ def test_dependent_step_sees_the_file_and_observation(tmp_path: Path) -> None:
     plan = loop.run("write a note and then use it")
     assert [step.status for step in plan.steps] == [StepStatus.DONE, StepStatus.DONE]
     prompts = _systems(llm, EXECUTOR_PREFIX)
-    first = prompts[0][-1].content or ""
-    second = prompts[-1][-1].content or ""
+    first = prompts[0][1].content or ""
+    second = next(
+        messages[1].content or ""
+        for messages in prompts
+        if "Use the note" in (messages[1].content or "")
+    )
+    evidence_id = loop.results["write"].evidence_ids[0]
+    assert evidence_id.startswith("ev-")
     assert "Use the note" in second
     assert "Results from earlier steps" not in first
     assert "SECRET-FROM-STEP-1" in second
     assert "note.txt" in second
     assert "wrote note.txt" in second
-    assert "evidence: (none)" in second
+    assert f"evidence: {evidence_id}" in second

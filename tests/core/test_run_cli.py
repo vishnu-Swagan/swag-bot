@@ -35,7 +35,7 @@ def test_help_lists_run_options() -> None:
     assert result.exit_code == 0
     text = _visible(result)
     assert "\x1b" not in text
-    for name in ("--autonomy", "--model", "--output-dir", "--max-steps", "--dry-run"):
+    for name in ("--autonomy", "--model", "--output-dir", "--max-steps", "--dry-run", "--evidence"):
         assert name in text
 
 
@@ -123,9 +123,10 @@ def test_run_writes_artifacts_and_streams_status(
     assert "[done] write Write hello" in text
     assert "wrote hello.txt" in text
     log = (out / "action-log.jsonl").read_text(encoding="utf-8").strip().splitlines()
-    assert len(log) == 1
-    assert "write_file" in log[0]
-    assert '"approver":"auto"' in log[0] or '"approver": "auto"' in log[0]
+    assert log
+    write_lines = [line for line in log if "write_file" in line]
+    assert len(write_lines) == 1
+    assert '"approver":"auto"' in write_lines[0] or '"approver": "auto"' in write_lines[0]
     assert "Wrote hello.txt." in (out / "summary.md").read_text(encoding="utf-8")
     assert f"Output: {out}" in text
 

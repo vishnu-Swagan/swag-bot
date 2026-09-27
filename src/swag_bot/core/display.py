@@ -30,6 +30,7 @@ _LABELS = {
     StepStatus.VERIFYING: "running",
     StepStatus.DONE: "done",
     StepStatus.FAILED: "failed",
+    StepStatus.UNVERIFIED: "unverified",
     StepStatus.SKIPPED: "skipped",
 }
 
@@ -38,6 +39,7 @@ _STYLES = {
     "running": "yellow",
     "done": "green",
     "failed": "red",
+    "unverified": "yellow",
     "skipped": "magenta",
 }
 

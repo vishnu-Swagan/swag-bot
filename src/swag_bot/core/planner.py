@@ -6,6 +6,7 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
+from swag_bot.core.checks import checks_for_step
 from swag_bot.core.parsing import PlanParseError, extract_json
 from swag_bot.core.prompts import PLANNER_SYSTEM
 from swag_bot.core.structured_output import PLAN_RESPONSE_FORMAT, forward_chat
@@ -142,7 +143,10 @@ def steps_from_payload(
         criteria = _text(item.get("success_criteria") or item.get("successCriteria"))
         instruction = _fold_criteria(_text(item.get("instruction")), criteria)
         depends = _depends(item)
-        built.append((Step(id=step_id, title=title, instruction=instruction), depends))
+        checks = checks_for_step(item, instruction)
+        built.append(
+            (Step(id=step_id, title=title, instruction=instruction, checks=checks), depends)
+        )
     known = set(existing_ids)
     known.update(step.id for step, _depends_on in built)
     steps: list[Step] = []

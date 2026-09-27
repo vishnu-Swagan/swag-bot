@@ -31,6 +31,7 @@ from swag_bot.core.memory_journal import (
 from swag_bot.core.tools import register_builtin_tools
 from swag_bot.errors import NotImplementedYet, SwagError
 from swag_bot.interfaces import (
+    ActionLogEntry,
     ApprovalPrompter,
     AutonomyLevel,
     MCPServerSpec,
@@ -50,6 +51,7 @@ from swag_bot.models import build_llm_client
 from swag_bot.plugins import build_registry
 from swag_bot.registry import InMemoryToolRegistry
 from swag_bot.safety import build_permission_policy, build_prompter, build_sandbox
+from swag_bot.safety.log import ActionLog
 
 app = typer.Typer(help="Plan, do, and verify a multi-step task.")
 
@@ -75,7 +77,7 @@ def run(
     output_dir: Annotated[
         Path | None,
         typer.Option(
-            help="Directory for plan.json, action-log.jsonl, and summary.md. "
+            help="Directory for plan.json, action-log.jsonl, run.jsonl, and summary.md. "
             "Defaults to ./swag-output/<UTC timestamp>."
         ),
     ] = None,
@@ -110,6 +112,13 @@ def run(
             help="ask, auto, or off. Overrides memory.mode for this run.",
         ),
     ] = None,
+    evidence: Annotated[
+        bool | None,
+        typer.Option(
+            "--evidence/--no-evidence",
+            help="Require cited evidence for a passing step. Default follows config.",
+        ),
+    ] = None,
 ) -> None:
     """Plan, do, and verify a multi-step task."""
     if not goal.strip():
@@ -140,6 +149,7 @@ def run(
                 strict_plan=strict_plan,
                 memory_mode=memory_mode,
                 display=view,
+                evidence=evidence,
             )
     except (ValueError, SwagError) as exc:
         view.print_final()
@@ -170,6 +180,7 @@ def execute_goal(
     strict_plan: bool = False,
     memory_mode: str | None = None,
     display: TaskListView | None = None,
+    evidence: bool | None = None,
 ) -> GoalResult:
     """Run one goal with the configured model, sandbox, policy, tools, and memory.
 
@@ -221,6 +232,12 @@ def execute_goal(
     )
 
     try:
+        evidence_enabled = active.evidence.enabled if evidence is None else evidence
+        home_log = ActionLog()
+
+        def persist(entry: ActionLogEntry) -> None:
+            home_log.append(entry)
+
         loop = PlanDoVerifyLoop(
             llm=llm,
             sandbox=sandbox,
@@ -235,6 +252,9 @@ def execute_goal(
             engine=engine,
             strict_plan=strict_plan,
             memory_mode=active.memory.mode,
+            action_sink=persist,
+            evidence_dir=destination,
+            evidence_enabled=evidence_enabled,
         )
     except (ValueError, SwagError):
         if mcp_client is not None:
@@ -258,7 +278,9 @@ def execute_goal(
         )
         if saved:
             loop.summary_text = append_remembered(loop.summary_text, saved)
-        failed = any(step.status == StepStatus.FAILED for step in plan.steps)
+        failed = any(
+            step.status in {StepStatus.FAILED, StepStatus.UNVERIFIED} for step in plan.steps
+        )
         return GoalResult(
             summary=loop.summary_text,
             output_dir=destination,
@@ -267,7 +289,9 @@ def execute_goal(
         )
     finally:
         if plan is not None:
-            write_run_artifacts(destination, plan, loop.action_log, loop.summary_text)
+            write_run_artifacts(
+                destination, plan, loop.action_log, loop.summary_text, ledger=loop.ledger
+            )
         if mcp_client is not None:
             mcp_client.close()
 

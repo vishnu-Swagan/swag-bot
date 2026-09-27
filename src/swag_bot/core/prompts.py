@@ -20,7 +20,12 @@ Use this shape:
       "title": "what this step does",
       "instruction": "how to do it with the available tools",
       "success_criteria": "what must be true when the step is done",
-      "depends_on": []
+      "depends_on": [],
+      "checks": [
+        {{"id": "report", "kind": "file_exists", "path": "report.md"}},
+        {{"id": "body", "kind": "file_contains", "path": "report.md", "contains": "Total"}},
+        {{"id": "tests", "kind": "command", "command": "pytest -q", "expected_exit": 0}}
+      ]
     }}
   ]
 }}
@@ -30,6 +35,10 @@ Rules:
 - depends_on lists ids of earlier steps in this plan, or is empty.
 - Independent steps should not depend on each other.
 - Prefer the registered tools when a step needs files or a shell.
+- Every step needs checks the harness can run: file_exists, file_contains,
+  file_absent, command, exit_code, or json_schema.
+- A check must be something a program can decide. Do not use a check that
+  only restates the model's own summary.
 """
 
 EXECUTOR_SYSTEM = f"""{EXECUTOR_PREFIX}
@@ -42,8 +51,11 @@ If an action is denied, say so and stop. Do not retry a denied action yourself.
 VERIFIER_SYSTEM = f"""{VERIFIER_PREFIX}
 Decide whether one step met its success criteria.
 Reply with one JSON object and no other text:
-{{"passed": true, "reason": "why", "replan": false}}
-Set passed to true only when the observation shows the success criteria are met.
+{{"passed": true, "reason": "why", "replan": false, "evidence_ids": ["ev-..."]}}
+The observation is the executor's claim. It is not evidence.
+Set passed to true only when the evidence ledger shows the success criteria are met.
+evidence_ids must list ledger ids you are relying on. Do not invent ids.
+A pass with no evidence_ids is rejected.
 Set replan to true when the step's approach is wrong and a different step is needed.
 Set replan to false when the same step should be tried again.
 When passed is true, replan must be false.

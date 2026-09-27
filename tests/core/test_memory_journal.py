@@ -162,7 +162,10 @@ def test_passed_step_memory_is_in_the_summary(tmp_path: Path) -> None:
     assert saved[0].metadata["run_id"] == plan.id
     assert saved[0].metadata["step_id"] == "read"
     assert "remembered:" in loop.summary_text
-    assert "evidence none" in loop.summary_text
+    evidence_id = loop.results["read"].evidence_ids[0]
+    assert evidence_id.startswith("ev-")
+    assert f"evidence {evidence_id}" in loop.summary_text
+    assert saved[0].metadata["evidence_ids"] == [evidence_id]
 
 
 def test_off_mode_does_not_put_memory_in_the_executor_prompt(tmp_path: Path) -> None:
@@ -177,6 +180,7 @@ def test_off_mode_does_not_put_memory_in_the_executor_prompt(tmp_path: Path) -> 
         max_attempts=1,
     )
     loop.memory_mode = "off"
+    loop.evidence_enabled = False
     memory.add(
         "secret earlier summary about Do the work",
         metadata={"kind": "run-summary", "goal": "old"},

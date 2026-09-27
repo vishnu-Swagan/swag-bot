@@ -83,13 +83,17 @@ def render_record(
             lines.append(f"  - {_clip(result.observation)}")
         if result is not None and result.error:
             lines.append(f"  - error: {_clip(result.error)}")
+        if result is not None and result.evidence_ids:
+            lines.append(f"  - evidence: {', '.join(result.evidence_ids)}")
     lines.append("")
     lines.append("## Result")
     lines.append("")
     lines.append(
-        "{done} done, {failed} failed, {skipped} skipped, {pending} pending.".format(
+        "{done} done, {failed} failed, {unverified} unverified, "
+        "{skipped} skipped, {pending} pending.".format(
             done=counts.get("done", 0),
             failed=counts.get("failed", 0),
+            unverified=counts.get("unverified", 0),
             skipped=counts.get("skipped", 0),
             pending=counts.get("pending", 0),
         )

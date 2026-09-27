@@ -116,11 +116,17 @@ answer. After the run, a summary is saved to memory.
 The output directory receives:
 
 - `plan.json`
-- `action-log.jsonl`
+- `action-log.jsonl` (clipped action outcomes; kept for compatibility)
+- `run.jsonl` (evidence contract: checks, tool results, and content hashes)
 - `summary.md`
 
+Each run also appends the same actions to `$SWAG_HOME/actions.jsonl`, which
+`swag safety log` reads. `--evidence` is on by default; `--no-evidence` lets a
+step pass on the model's word and still writes the action index.
+
 Other useful flags: `--dry-run`, `--max-steps`, `--max-attempts`,
-`--concurrency`, `--model`, and `--engine` (`python` or `graphbit`).
+`--concurrency`, `--model`, `--evidence` / `--no-evidence`, and `--engine`
+(`python` or `graphbit`).
 GraphBit is optional (`pip install -e ".[graphbit]"`). The default scheduler
 is pure Python. If GraphBit is not installed, `--engine graphbit` falls back
 and says so.

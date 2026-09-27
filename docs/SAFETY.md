@@ -52,7 +52,17 @@ Classification raises risk; it never lowers `destructive`.
 
 ## Action log
 
-`$SWAG_HOME/actions.jsonl` is append-only. `swag safety log` prints it. `swag safety policy` prints the autonomy level, the risk rules, active plugin grants, and any grants suspended because the plugin is disabled. `swag safety grant` and `swag safety revoke` edit grants. Rewriting active grants keeps the `suspended` object, so a manual grant does not drop a disabled plugin's saved permissions.
+`$SWAG_HOME/actions.jsonl` is an append-only index. `swag run` appends every
+action there as it happens, and also writes the same rows to
+`<output-dir>/action-log.jsonl`. The full per-run record, including tool
+evidence and acceptance checks, is `<output-dir>/run.jsonl` (see
+`docs/spec/evidence-contract.md`). `swag safety log` prints the home index,
+so a run and the safety log show the same actions. `swag safety policy`
+prints the autonomy level, the risk rules, active plugin grants, and any
+grants suspended because the plugin is disabled. `swag safety grant` and
+`swag safety revoke` edit grants. Rewriting active grants keeps the
+`suspended` object, so a manual grant does not drop a disabled plugin's
+saved permissions.
 
 Secrets are redacted before they are stored: `sk-...` keys, bearer tokens, AWS-style access key ids, GitHub tokens, `password=` / `token=` / `api_key=` assignments, and any value under a secret-named key.
 

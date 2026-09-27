@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Evidence ledger and execution-grounded checks. Each step can carry acceptance checks (`file_exists`, `file_contains`, `command`, `exit_code`, `json_schema`). The harness runs them and records real tool output in `<output-dir>/run.jsonl`. A step is not done unless that evidence is cited. See `docs/spec/evidence-contract.md`.
+- `swag run` appends its actions to `$SWAG_HOME/actions.jsonl`, so `swag safety log` shows the same actions as the run. `--no-evidence` restores model-only checks.
+
 ## [0.1.0] - 2026-09-27
 
 First tagged release. This is the v0 agent: `swag run` plans a goal, carries
