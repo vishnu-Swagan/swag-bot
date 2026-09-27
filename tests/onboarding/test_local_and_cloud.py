@@ -105,8 +105,8 @@ def test_under_7b_is_skipped_and_unknown_size_is_allowed() -> None:
     assert preferred == ("qwen2.5-7b", True)
     note = unknown_size_note("my-local-model")
     assert "my-local-model" in note
-    assert "swag model probe" in note
-    assert small_model_probe_available() is False
+    assert "Run `swag model probe`" in note
+    assert small_model_probe_available() is True
 
 
 def test_local_7b_is_used_when_ollama_has_only_a_3b() -> None:

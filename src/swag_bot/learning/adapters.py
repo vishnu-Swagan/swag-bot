@@ -1,8 +1,8 @@
-"""Stand-ins for the evidence ledger (#1) and run replay (#10).
+"""Evidence and replay adapters for the skill-learning gate.
 
-``StubEvidenceSource`` and ``StubRunReplayer`` never report a pass. The file
-adapters read a JSON drop-in when one exists and otherwise behave like the
-stubs. They do not execute a run and they do not invent verification.
+``LedgerEvidenceSource`` and ``BundleRunReplayer`` are what ``swag skill``
+uses. The file drop-ins remain for a run that was not recorded as a bundle.
+``StubEvidenceSource`` and ``StubRunReplayer`` never report a pass.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from swag_bot.learning.protocols import (
     VerifiedRunEvidence,
     check_run_id,
 )
+from swag_bot.learning.runtime import BundleRunReplayer, LedgerEvidenceSource
 
 
 class StubEvidenceSource:
@@ -117,14 +118,14 @@ def replay_dir(home: Path) -> Path:
     return home / "replays"
 
 
-def evidence_source_for(home: Path) -> FileEvidenceSource:
-    """File ledger when present, otherwise the unverified stub."""
-    return FileEvidenceSource(evidence_dir(home))
+def evidence_source_for(home: Path) -> LedgerEvidenceSource:
+    """Bundle ledger when a run was recorded, otherwise the evidence drop-in."""
+    return LedgerEvidenceSource(home)
 
 
-def replayer_for(home: Path) -> FileRunReplayer:
-    """File replay outcome when present, otherwise the unavailable stub."""
-    return FileRunReplayer(replay_dir(home))
+def replayer_for(home: Path) -> BundleRunReplayer:
+    """Replay the recorded bundle. A drop-in file is used only when no bundle exists."""
+    return BundleRunReplayer(home)
 
 
 def install_evidence(home: Path, run_id: str, source: Path) -> Path:

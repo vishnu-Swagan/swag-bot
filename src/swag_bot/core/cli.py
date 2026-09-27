@@ -499,8 +499,21 @@ def execute_goal(
                 recorder.attach_external_evidence(destination)
             except Exception:
                 pass
+            if recorder.destination is not None and plan is not None:
+                _index_bundle(plan.id, recorder.destination)
         if mcp_client is not None:
             mcp_client.close()
+
+
+def _index_bundle(run_id: str, bundle: Path) -> None:
+    """Publish ``$SWAG_HOME/bundles/<run_id>.json`` for later replay."""
+    try:
+        from swag_bot.config import swag_home
+        from swag_bot.learning.runtime import register_bundle
+
+        register_bundle(swag_home(), run_id, bundle)
+    except Exception as exc:
+        print(f"warning: bundle index was not written: {exc}", file=sys.stderr)
 
 
 def _flag(loop: object, name: str) -> bool | None:

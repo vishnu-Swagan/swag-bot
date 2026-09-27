@@ -1,9 +1,8 @@
-"""Hook for the small-model harness. This package does not run it.
+"""Hook for the small-model harness.
 
-``swag model probe`` belongs to the harness work (PR #18). When that module
-lands, ``small_model_probe_available`` becomes true and setup can point at
-it. Until then, a model id with no size token is still allowed, and the
-message tells the user to probe it later.
+``swag model probe`` profiles the active model. When that command is
+installed, setup tells the user to run it for a model id that does not
+say its size.
 """
 
 from __future__ import annotations
@@ -12,12 +11,12 @@ import importlib
 
 
 def small_model_probe_available() -> bool:
-    """True when ``swag_bot.models.probe.probe_model`` can be imported."""
+    """True when ``swag model probe`` can profile a model."""
     try:
-        module = importlib.import_module("swag_bot.models.probe")
+        module = importlib.import_module("swag_bot.harness.probe")
     except ImportError:
         return False
-    return callable(getattr(module, "probe_model", None))
+    return callable(getattr(module, "profile_model", None))
 
 
 def unknown_size_note(model_id: str) -> str:

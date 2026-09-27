@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-27
+
+Integrated on `integration/v0.2`. Not tagged, and the package version stays 0.1.0.
+
 ### Added
 
 - Evidence ledger and execution-grounded checks. Each step can carry acceptance checks (`file_exists`, `file_contains`, `command`, `exit_code`, `json_schema`). The harness runs them and records real tool output in `<output-dir>/run.jsonl`. A step is not done unless that evidence is cited. See `docs/spec/evidence-contract.md`.
@@ -25,10 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `swag serve-mcp` asks for write and shell approval with MCP elicitation. Clients that cannot show the form get a denial in the tool result, or a preapproved grant from `swag setup --grant`. The server does not read stdin or write prompts to stdout
 - MCP tools `swag_start_task`, `swag_task_status`, `swag_task_result`, and `swag_setup_status`
 - Run bundles. `swag run --record` writes a portable, redacted bundle (plan, model traffic, tool results, approvals, file diffs, evidence ledger, undo tree hashes, plan fallback, strict plan, and memory mode). `swag replay` re-executes it from the saved model responses, or live to compare. `swag bundle inspect` and `swag bundle export` share a run. Format: `docs/spec/run-bundle.md`.
-- Verification-gated skill learning. A successful run can be distilled into a Cowork-compatible `SKILL.md` and kept in `$SWAG_HOME/skill-candidates/` until evidence verification and a replay both pass. `swag skill learn|candidates|promote|reject|recheck`. Promoted skills land in `$SWAG_HOME/skills/` with provenance.   Unverified runs are never activated.
+- Verification-gated skill learning. A successful run can be distilled into a Cowork-compatible `SKILL.md` and kept in `$SWAG_HOME/skill-candidates/` until evidence verification and a replay both pass. `swag skill learn|candidates|promote|reject|recheck`. Promoted skills land in `$SWAG_HOME/skills/` with provenance. Unverified runs are never activated.
+- Step handoff. A step that lists `depends_on` receives the earlier step's observation, changed files, and evidence ids. `--strict-plan` refuses a plan the model did not actually return. Memory writes carry the run they came from.
 - `swag gallery search`, `info`, and `install` for a static JSON gallery index. Install verifies a minisign signature and runs a local static scan before the existing permission prompt. Unsigned or tampered plugins are refused unless `--allow-unsigned` or `--allow-tampered` is passed, and that override is written to `$SWAG_HOME/gallery/audit.jsonl`.
 - `swag gallery keygen`, `sign`, and `bundle` so a publisher can sign a plugin with Swag Bot or with the `minisign` CLI. The index format is documented in `docs/GALLERY.md`.
 - Chrome extension in `extension/` and `swag extension install`. The side panel sends a task to a local native messaging host, streams plan-do-verify progress, and approves or denies actions. Optional tab actions use the same `browser__*` tool names and risk levels as the headless browser plugin.
+- Skill learning reads the evidence ledger inside a recorded bundle and replays that bundle. A same-task replay passes only when it matches the recording. A varied replay runs the new goal live and passes only when every step is done. With no model, that replay is unavailable, which is not a pass. `swag setup` points at `swag model probe` when the harness is installed.
 
 ## [0.1.0] - 2026-09-27
 

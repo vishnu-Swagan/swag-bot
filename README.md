@@ -11,16 +11,26 @@ default, and it does not need an API key.
 
 ## Features
 
-- Plan, do, and verify loop (`swag run`), with parallel independent steps
+- Plan, do, and verify loop (`swag run`), with parallel independent steps and step handoff that cites evidence ids
+- Evidence ledger and acceptance checks. A step is not done without cited evidence ([docs/spec/evidence-contract.md](docs/spec/evidence-contract.md))
+- Honest plan failure: `PLAN FALLBACK` when the model does not return a plan, and `--strict-plan` to stop instead
 - Local sandbox by default, optional Docker sandbox
-- Permission policy with autonomy levels `ask-always`, `ask-risky`, and `auto`
-- Taint firewall on tool output, so a fetched page or plugin cannot by itself send mail, hit the network, read secrets, or delete (`docs/TAINT.md`)
+- Permission policy with autonomy levels `ask-always`, `ask-risky`, `ask-irreversible`, and `auto`. One approval card shows reversibility and taint
+- Undo ledger and reversibility labels (`reversible`, `compensable`, `irreversible`) ([docs/SAFETY.md](docs/SAFETY.md))
+- Taint firewall on tool output, so a fetched page or plugin cannot by itself send mail, hit the network, read secrets, or delete ([docs/TAINT.md](docs/TAINT.md))
+- Opt-in uncertainty escalation and a small jury for irreversible actions ([docs/ESCALATION.md](docs/ESCALATION.md))
+- Small-model harness: `swag model probe`, tiny/standard/frontier scaffolds ([docs/MODELS.md](docs/MODELS.md))
+- One-prompt setup: `scripts/install.sh` and `swag setup --auto` (Ollama, LM Studio, Jan, llama.cpp, GPT4All, and a free-cloud menu)
+- Run bundles and offline `swag replay` ([docs/spec/run-bundle.md](docs/spec/run-bundle.md))
+- Verification-gated skill learning: a candidate is promoted only after the evidence ledger and a bundle replay both pass
 - Append-only action log with secret redaction
-- Claude Cowork-compatible plugins, Agent Skills, slash commands, and a marketplace installer
+- Claude Cowork-compatible plugins, Agent Skills, slash commands, and a signed minisign gallery ([docs/GALLERY.md](docs/GALLERY.md))
 - MCP client (stdio and streamable HTTP) and `swag serve-mcp`
-- Headless browser plugin (`plugins/browser`, optional `browser` extra)
+- Headless browser plugin (`plugins/browser`, optional `browser` extra) and a Chrome side panel (`extension/`)
 - Ollama by default; OpenAI, Anthropic, Gemini, and OpenRouter through LiteLLM
-- Pluggable memory: SQLite (default), a JSON file, or an external agentmemory server
+- Pluggable memory: SQLite (default), a JSON file, or an external agentmemory server. Memory writes record which run they came from
+
+Specs and model notes: [docs/MODELS.md](docs/MODELS.md), [docs/spec/evidence-contract.md](docs/spec/evidence-contract.md), [docs/spec/run-bundle.md](docs/spec/run-bundle.md).
 
 ## Install
 
@@ -383,7 +393,6 @@ and click the Swag Bot icon. After a store install, add the published id with
 
 - Telegram and Slack front ends
 - A desktop app
-- A plugin gallery
 
 ## Development
 
