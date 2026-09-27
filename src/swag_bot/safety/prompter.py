@@ -9,7 +9,8 @@ from rich.panel import Panel
 from rich.prompt import Confirm
 from rich.table import Table
 
-from swag_bot.interfaces import ActionRequest
+from swag_bot.interfaces import ActionRequest, Reversibility
+from swag_bot.safety.reversibility import classify_reversibility
 
 
 class RichApprovalPrompter:
@@ -26,13 +27,26 @@ class RichApprovalPrompter:
     def prompt(self, action: ActionRequest) -> bool:
         """Return True to allow the action, False to deny it."""
         self.console.print(_panel(action))
+        question = _question(action)
         try:
             if self._confirm is not None:
-                return bool(self._confirm("Allow this action?", default=False))
-            return bool(Confirm.ask("Allow this action?", console=self.console, default=False))
+                return bool(self._confirm(question, default=False))
+            return bool(Confirm.ask(question, console=self.console, default=False))
         except (EOFError, KeyboardInterrupt):
             self.console.print("Denied (no answer).")
             return False
+
+
+def _reversibility_of(action: ActionRequest) -> Reversibility:
+    if action.reversibility is not None:
+        return action.reversibility
+    return classify_reversibility(action)
+
+
+def _question(action: ActionRequest) -> str:
+    if _reversibility_of(action) is Reversibility.IRREVERSIBLE:
+        return "Allow this irreversible action? It is a point of no return."
+    return "Allow this action?"
 
 
 def _panel(action: ActionRequest) -> Panel:
@@ -41,10 +55,23 @@ def _panel(action: ActionRequest) -> Panel:
     table.add_column("value")
     table.add_row("kind", action.kind)
     table.add_row("risk", action.risk.value)
+    table.add_row("reversibility", _reversibility_label(_reversibility_of(action)))
     table.add_row("summary", action.summary)
     if action.target:
         table.add_row("target", action.target)
     plugin = action.arguments.get("plugin")
     if isinstance(plugin, str) and plugin:
         table.add_row("plugin", plugin)
-    return Panel(table, title="Approval required", border_style="yellow")
+    border = "red" if _reversibility_of(action) is Reversibility.IRREVERSIBLE else "yellow"
+    title = "Approval required"
+    if _reversibility_of(action) is Reversibility.IRREVERSIBLE:
+        title = "Approval required — point of no return"
+    return Panel(table, title=title, border_style=border)
+
+
+def _reversibility_label(reversibility: Reversibility) -> str:
+    if reversibility is Reversibility.IRREVERSIBLE:
+        return "irreversible — point of no return"
+    if reversibility is Reversibility.COMPENSABLE:
+        return "compensable — undo runs the registered inverse"
+    return "reversible — covered by the workspace snapshot"

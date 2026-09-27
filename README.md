@@ -173,6 +173,7 @@ swag safety grant example-github-helper filesystem.write
 | --- | --- |
 | `ask-always` | Every action, including reads |
 | `ask-risky` (default) | Anything that is not a pure read |
+| `ask-irreversible` | Only irreversible actions (the point of no return) |
 | `auto` | Never. Actions are still logged. A hard deny still applies |
 
 ```bash
@@ -185,6 +186,25 @@ The sandbox defaults to `local`: commands run in the task directory with a
 timeout, and file paths cannot escape it. `sandbox.mode` can be `off`,
 `local`, or `docker`. Docker runs a throwaway container with the network off
 unless you turn it on. Details are in [docs/SAFETY.md](docs/SAFETY.md).
+
+## Undo
+
+Swag Bot snapshots the task directory before each file write and each shell
+command, so `swag undo` can put those files back, including deletes done by
+the shell. `--to` names a step id and restores the workspace to the start of
+that step.
+
+```bash
+swag undo
+swag undo --to edit-files
+```
+
+Snapshots live in `$SWAG_HOME/undo`, outside the task directory. Network
+calls, sent mail, payments, and files outside the task directory are not in
+the snapshot. The undo report lists those irreversible actions instead of
+pretending they were reversed. Plugins can register an inverse in
+`plugin.json` under `compensations`. The limits are in
+[docs/SAFETY.md](docs/SAFETY.md).
 
 ## MCP
 

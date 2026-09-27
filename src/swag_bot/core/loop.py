@@ -37,6 +37,7 @@ from swag_bot.interfaces import (
     TaskPlan,
     Tool,
     ToolRegistry,
+    UndoController,
 )
 from swag_bot.registry import InMemoryToolRegistry
 
@@ -118,6 +119,7 @@ class PlanDoVerifyLoop:
         action_sink: Callable[[ActionLogEntry], None] | None = None,
         evidence_dir: Path | None = None,
         evidence_enabled: bool = True,
+        undo: UndoController | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
@@ -141,6 +143,7 @@ class PlanDoVerifyLoop:
         self.evidence_dir = evidence_dir
         self.evidence_enabled = evidence_enabled
         self.ledger = EvidenceLedger(directory=evidence_dir)
+        self.undo = undo
         if tools is None:
             tools = InMemoryToolRegistry()
         register_builtin_tools(tools, sandbox)
@@ -201,6 +204,8 @@ class PlanDoVerifyLoop:
         if dry_run:
             self.summary_text = summarize(self._llm, plan, {}, model=self.model, dry_run=True)
             return plan
+        if self.undo is not None:
+            self.undo.begin_run(plan.id, self.sandbox.workdir)
 
         executor = StepExecutor(
             llm=self._llm,
@@ -257,6 +262,8 @@ class PlanDoVerifyLoop:
                 try:
                     step.status = StepStatus.DOING
                     self._emit_status(step)
+                    if self.undo is not None:
+                        self.undo.begin_step(step.id)
                     result = executor.execute(
                         step,
                         attempt=attempt,
@@ -290,12 +297,16 @@ class PlanDoVerifyLoop:
                         feedback = verdict.reason
                         if attempt >= self.max_attempts:
                             self._unverified(step, result, verdict.reason)
+                            self._rollback_step(step.id)
                             return
+                        self._rollback_step(step.id)
                         continue
                     feedback = verdict.reason
                     if verdict.replan or attempt >= self.max_attempts:
                         self._fail(step, result, verdict.reason, replan=verdict.replan)
+                        self._rollback_step(step.id)
                         return
+                    self._rollback_step(step.id)
                 finally:
                     current_attempt.reset(token)
         finally:
@@ -410,6 +421,11 @@ class PlanDoVerifyLoop:
             )
         )
 
+    def _rollback_step(self, step_id: str) -> None:
+        if self.undo is None or not self.undo.auto_rollback:
+            return
+        self.undo.rollback_step(step_id)
+
     def _record(self, entry: ActionLogEntry) -> None:
         plan = self._plan
         if plan is not None and entry.run_id is None:
@@ -419,6 +435,8 @@ class PlanDoVerifyLoop:
             self.ledger.add_action(entry)
         if self.action_sink is not None:
             self.action_sink(entry)
+        if self.undo is not None and entry.approved:
+            self.undo.note_action(entry.action, outcome=entry.outcome)
 
     def _on_tool(self, text: str) -> None:
         step_id = getattr(self._local, "step_id", None)
