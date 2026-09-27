@@ -17,6 +17,7 @@ from swag_bot.interfaces import (
     Message,
     PermissionPolicy,
     RiskLevel,
+    StepStatus,
     Tool,
     ToolCall,
     default_requires_approval,
@@ -87,7 +88,7 @@ def test_registry_call_and_missing() -> None:
         registry.get("missing")
 
 
-def test_factories_and_loop_are_stubs(tmp_path: Path) -> None:
+def test_factories_are_stubs_and_loop_returns_a_plan(tmp_path: Path) -> None:
     from swag_bot.config import Settings
 
     settings = Settings()
@@ -127,5 +128,7 @@ def test_factories_and_loop_are_stubs(tmp_path: Path) -> None:
         policy=policy,
         prompter=AutoApprovePrompter(),
     )
-    with pytest.raises(NotImplementedYet):
-        loop.run("do the thing")
+    plan = loop.run("do the thing")
+    assert plan.goal == "do the thing"
+    assert plan.steps
+    assert plan.steps[0].status in {StepStatus.DONE, StepStatus.FAILED}

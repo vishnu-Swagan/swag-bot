@@ -37,6 +37,9 @@ dev = [
 models = ["litellm"]
 mcp = ["mcp"]
 sandbox = ["docker"]
+# Apache-2.0 optional workflow engine (InfinitiBit/graphbit).
+# The default scheduler is pure Python and does not import this package.
+graphbit = ["graphbit"]
 
 [project.scripts]
 swag = "swag_bot.cli:main"
