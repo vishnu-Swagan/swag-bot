@@ -128,6 +128,7 @@ def install_plugin(
     clone: CloneFn | None = None,
     announce: Announce | None = None,
     grant_store: GrantStore | None = None,
+    source_label: str | None = None,
 ) -> InstallRecord:
     """Copy a plugin into the Swag home and record it.
 
@@ -136,6 +137,10 @@ def install_plugin(
     A denial raises ``PluginError`` and does not write the plugin or its grants.
     An approval (or ``--yes``) records those permissions on ``grant_store``
     when one is configured. A disabled install stores them suspended.
+
+    ``source_label`` overrides the registry ``source`` string. The gallery
+    installer sets it so the registry records the index entry instead of a
+    temporary directory. The files are still copied from ``source``.
     """
     home_dir = _home(home)
     cloner = clone if clone is not None else default_clone
@@ -159,7 +164,7 @@ def install_plugin(
         name=plugin.manifest.name,
         version=plugin.manifest.version,
         enabled=enabled,
-        source=source,
+        source=source if source_label is None else source_label,
         permissions=list(plugin.manifest.permissions),
         installed_at=datetime.now(UTC).isoformat(),
     )

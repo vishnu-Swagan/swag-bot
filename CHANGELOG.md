@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `swag gallery search`, `info`, and `install` for a static JSON gallery index. Install verifies a minisign signature and runs a local static scan before the existing permission prompt. Unsigned or tampered plugins are refused unless `--allow-unsigned` or `--allow-tampered` is passed, and that override is written to `$SWAG_HOME/gallery/audit.jsonl`.
+- `swag gallery keygen`, `sign`, and `bundle` so a publisher can sign a plugin with Swag Bot or with the `minisign` CLI. The index format is documented in `docs/GALLERY.md`.
+
 ## [0.1.0] - 2026-09-27
 
 First tagged release. This is the v0 agent: `swag run` plans a goal, carries
