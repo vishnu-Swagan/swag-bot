@@ -7,6 +7,7 @@ import sys
 
 import pytest
 
+from swag_bot.errors import SwagError
 from swag_bot.interfaces import ActionRequest, RiskLevel
 from swag_bot.onboarding.approvals import (
     MCPApprovalPrompter,
@@ -67,6 +68,13 @@ def test_task_yes_does_not_cover_destructive_and_a_grant_does() -> None:
     assert granted.prompt(_write()) is True
     assert granted.prompt(_destructive()) is True
     assert granted.explain() == ""
+
+
+def test_declined_prompt_stops_the_step() -> None:
+    prompter = MCPApprovalPrompter(allow_risky=False, reason="declined")
+    with pytest.raises(SwagError, match="declined"):
+        prompter.prompt(_write())
+    assert "declined" in prompter.explain().lower()
 
 
 def test_grant_command_persists_under_swag_home() -> None:

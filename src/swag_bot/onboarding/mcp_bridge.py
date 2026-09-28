@@ -16,6 +16,7 @@ from typing import Annotated, Any, cast
 
 import anyio
 
+from swag_bot.core.mcp_result import is_failure_status
 from swag_bot.interfaces import AutonomyLevel
 from swag_bot.onboarding.approvals import (
     AllowRisky,
@@ -23,6 +24,9 @@ from swag_bot.onboarding.approvals import (
     MCPApprovalPrompter,
     McpApprovals,
     TaskDecision,
+    allow_risky_form,
+    approval_details,
+    approval_title,
     bind_prompter,
     load_mcp_approvals,
     reset_prompter,
@@ -39,6 +43,7 @@ try:
     )
     from mcp.server.mcpserver.context import Context
     from mcp.server.mcpserver.resolve import Elicit, Resolve
+    from mcp.types import CallToolResult, ContentBlock, TextContent
 except ImportError as exc:  # pragma: no cover - caller checks the extra first
     raise ImportError("mcp is required to register Swag Bot's MCP tools") from exc
 
@@ -68,14 +73,8 @@ def resolve_task_approval(goal: str, ctx: Context) -> Elicit[AllowRisky] | TaskD
         return TaskDecision(allow_risky=True, reason=reason)
     if not _supports_form(ctx):
         return TaskDecision(allow_risky=False, reason="unsupported")
-    short = " ".join(str(goal).split())
-    if len(short) > 180:
-        short = short[:177] + "..."
-    message = (
-        "Swag Bot is about to run a task that may write files or run shell "
-        f"commands: {short}. Allow those actions? Destructive actions stay denied."
-    )
-    return Elicit(message, AllowRisky)
+    title = approval_title(str(goal))
+    return Elicit(title, allow_risky_form(title, approval_details(str(goal))))
 
 
 def register_tools(
@@ -86,18 +85,26 @@ def register_tools(
 ) -> None:
     """Attach the Swag Bot tools to an ``MCPServer``."""
 
-    @_tool(server, description="Run a Swag Bot task. Pass the goal; the result is a short summary.")
+    @_tool(
+        server,
+        description=(
+            "Run a Swag Bot task. Returns JSON with status (met, not_met, or "
+            "aborted), goal checks and evidence ids, output_dir, files (size "
+            "and short text), and summary. For a task that may take more than "
+            "a minute, call swag_start_task and poll swag_task_status instead."
+        ),
+    )
     async def swag_run_task(
         goal: str,
         ctx: Context,
         approval: Annotated[ElicitationResult[AllowRisky], Resolve(resolve_task_approval)],
-    ) -> str:
+    ) -> CallToolResult:
         """Run a goal. Approvals use MCP elicitation or a preapproved grant."""
         del ctx
         if not goal or not goal.strip():
             raise ValueError("goal must not be empty")
         if runner is None:
-            return "No task runner is configured."
+            return _tool_result("No task runner is configured.", failed=False)
         prompter = prompter_for(approval)
 
         def run_bound() -> str:
@@ -113,7 +120,8 @@ def register_tools(
             summary = await anyio.to_thread.run_sync(run_bound)
         except Exception as exc:
             summary = str(exc)
-        return _with_denials(summary if isinstance(summary, str) else json.dumps(summary), prompter)
+        text = summary if isinstance(summary, str) else json.dumps(summary)
+        return _tool_result(text, failed=_failed_text(text, prompter), prompter=prompter)
 
     @_tool(
         server,
@@ -138,14 +146,14 @@ def register_tools(
         return json.dumps({"run_id": run_id, "status": "running"})
 
     @_tool(server, description="Status of a task started with swag_start_task.")
-    def swag_task_status(run_id: str) -> str:
-        """Return status, summary, and any approval denials for ``run_id``."""
-        return _task_json(run_id)
+    def swag_task_status(run_id: str) -> CallToolResult:
+        """Return status, summary, files, and any approval denials for ``run_id``."""
+        return _task_result(run_id)
 
     @_tool(server, description="Result of a task started with swag_start_task.")
-    def swag_task_result(run_id: str) -> str:
-        """Return the same snapshot as swag_task_status."""
-        return _task_json(run_id)
+    def swag_task_result(run_id: str) -> CallToolResult:
+        """Return the same snapshot as swag_task_status. Failures set isError."""
+        return _task_result(run_id)
 
     @_tool(server, description="List Agent Skills (name and description).")
     def swag_list_skills() -> str:
@@ -203,20 +211,79 @@ def _with_denials(summary: str, prompter: MCPApprovalPrompter) -> str:
     return extra
 
 
-def _task_json(run_id: str) -> str:
+def _task_result(run_id: str) -> CallToolResult:
     if not run_id or not run_id.strip():
         raise ValueError("run_id must not be empty")
     view = BOARD.get(run_id.strip())
     if view is None:
-        return json.dumps({"error": "unknown run_id", "run_id": run_id})
-    return json.dumps(
-        {
-            "run_id": view.run_id,
-            "status": view.status,
-            "summary": view.summary,
-            "denials": view.denials,
-        }
-    )
+        missing = {"error": "unknown run_id", "run_id": run_id}
+        return _tool_result(json.dumps(missing), failed=True)
+    body: dict[str, Any] = {
+        "run_id": view.run_id,
+        "status": view.status,
+        "summary": view.summary,
+        "denials": view.denials,
+    }
+    parsed = _json_object(view.summary)
+    if parsed is not None and parsed.get("status") in {"met", "not_met", "aborted"}:
+        body.update(parsed)
+        body["run_id"] = view.run_id
+        body["denials"] = view.denials or str(parsed.get("denials") or "")
+        if view.status == "running":
+            body["status"] = "running"
+        elif view.status == "error" and body.get("status") == "met":
+            body["status"] = "aborted"
+    failed = view.status == "error" or is_failure_status(body.get("status"))
+    return _tool_result(json.dumps(body), failed=failed)
+
+
+def _tool_result(
+    text: str,
+    *,
+    failed: bool,
+    prompter: MCPApprovalPrompter | None = None,
+) -> CallToolResult:
+    """Return text the model can read, plus structured JSON when the text is an object.
+
+    A bare string used to be wrapped as ``{"result": "<summary>"}``. Failures
+    and aborts set ``isError`` so the client does not treat them as success.
+    """
+    payload = _json_object(text)
+    if prompter is not None:
+        extra = prompter.explain().strip()
+        if extra and payload is not None:
+            payload["denials"] = extra
+            summary = str(payload.get("summary") or "")
+            if extra not in summary:
+                payload["summary"] = (summary.rstrip() + "\n\n" + extra).strip()
+            text = json.dumps(payload)
+        elif extra and payload is None:
+            text = _with_denials(text, prompter)
+    if payload is not None and is_failure_status(payload.get("status")):
+        failed = True
+    if prompter is not None and prompter.reason == "declined":
+        failed = True
+    blocks: list[ContentBlock] = [TextContent(type="text", text=text)]
+    if payload is None:
+        return CallToolResult(content=blocks, is_error=failed)
+    return CallToolResult(content=blocks, structured_content=payload, is_error=failed)
+
+
+def _failed_text(text: str, prompter: MCPApprovalPrompter) -> bool:
+    if prompter.reason == "declined":
+        return True
+    payload = _json_object(text)
+    return payload is not None and is_failure_status(payload.get("status"))
+
+
+def _json_object(text: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if isinstance(parsed, dict):
+        return parsed
+    return None
 
 
 def _skill_row(item: Any) -> dict[str, str]:

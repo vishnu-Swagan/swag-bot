@@ -9,10 +9,14 @@ from swag_bot.config import Settings, config_path, load_settings
 from swag_bot.interfaces import AutonomyLevel
 from swag_bot.onboarding.detect import (
     BYOK_CANDIDATES,
+    Decision,
     EnvironmentSnapshot,
     capture_environment,
+    decide,
     model_is_installed,
 )
+
+_SETUP_COMMAND = "Run `swag setup --auto`."
 
 
 def doctor_report(
@@ -33,26 +37,63 @@ def doctor_report(
         facts = snapshot
     provider = active.model.provider.strip().lower()
     model = active.model.model
-    ready, reason = _readiness(provider, model, active.model.api_base, facts)
     path = config_path()
+    present = path.is_file()
+    ready, reason, detected = _readiness(
+        provider,
+        model,
+        active.model.api_base,
+        facts,
+        config_present=present,
+    )
     report: dict[str, Any] = {
         "autonomy": active.autonomy.value
         if isinstance(active.autonomy, AutonomyLevel)
         else str(active.autonomy),
         "config_file": str(path),
-        "config_present": path.is_file(),
+        "config_present": present,
         "model": model,
         "provider": provider,
         "ready": ready,
         "reason": reason,
         "version": __version__,
     }
+    if detected is not None and detected.model:
+        report["detected_model"] = detected.model
+        report["detected_provider"] = detected.provider
     if active.model.api_base:
         report["api_base"] = active.model.api_base
     return report
 
 
 def _readiness(
+    provider: str,
+    model: str,
+    api_base: str | None,
+    facts: EnvironmentSnapshot,
+    *,
+    config_present: bool,
+) -> tuple[bool, str, Decision | None]:
+    """Whether the configured model can run, and what to do when it cannot.
+
+    With no config file the default tag (``llama3.2``) is not treated as a
+    choice the user made. The reason names the auto-detected model and the
+    exact ``swag setup --auto`` command.
+    """
+    ready, detail = _configured_ready(provider, model, api_base, facts)
+    if ready:
+        return True, detail, None
+    decision = decide(facts)
+    return False, _unready_reason(
+        detail,
+        decision,
+        config_present=config_present,
+        provider=provider,
+        model=model,
+    ), decision
+
+
+def _configured_ready(
     provider: str,
     model: str,
     api_base: str | None,
@@ -75,6 +116,49 @@ def _readiness(
     if ready:
         return True, f"{env_var} is set."
     return False, f"{env_var} is unset."
+
+
+def _unready_reason(
+    detail: str,
+    decision: Decision,
+    *,
+    config_present: bool,
+    provider: str,
+    model: str,
+) -> str:
+    if config_present:
+        lead = detail.rstrip()
+    else:
+        lead = (
+            f"No config file yet. The default {provider} model {model} "
+            "is not a completed setup."
+        )
+    text = f"{lead} {_detect_sentence(decision, provider, model)}".strip()
+    if "`swag setup --auto`" not in text:
+        text = f"{text} {_SETUP_COMMAND}"
+    return text
+
+
+def _detect_sentence(decision: Decision, provider: str, model: str) -> str:
+    if decision.action == "configure" and decision.model:
+        if decision.provider == provider and decision.model == model:
+            picked = f"Auto-detect would use {decision.provider} model {decision.model}."
+        else:
+            picked = (
+                f"Auto-detect would use {decision.provider} model {decision.model}, "
+                f"not {provider} model {model}."
+            )
+        return f"{picked} {_SETUP_COMMAND}"
+    if decision.action == "pull" and decision.model:
+        from swag_bot.onboarding.detect import RECOMMENDED_SIZE_LABEL
+
+        return (
+            f"Auto-detect would pull {decision.model} ({RECOMMENDED_SIZE_LABEL}). "
+            f"Run `swag setup --auto --yes` to pull it, or `swag setup --auto` to choose."
+        )
+    if decision.action == "stop" and decision.message.strip():
+        return decision.message.strip()
+    return "No usable model is selected yet."
 
 
 def _local_ready(model: str, api_base: str, facts: EnvironmentSnapshot) -> tuple[bool, str]:
