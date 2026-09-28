@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- `swag_setup_status` names the auto-detected model and `swag setup --auto` when no config file has been written. A task started over MCP runs the same first-run setup as `swag run`, or stops with that command instead of calling the default model.
+- MCP task results are JSON: `status` (`met`, `not_met`, `aborted`), goal checks with evidence ids, the output folder, and the requested files with sizes and short text. Failures and aborts set `isError`.
+- Declining or cancelling the MCP approval form stops the task before the model runs. The run is not met, `summary.md` says the user declined, and the tool result says so.
+- The MCP approval form title is the action and target (`Run: python3 fizzbuzz.py`). The goal stays in the form body.
+- Install prompts for Claude Code, Cursor, Codex, Gemini CLI, Claude Desktop, VS Code, and a generic MCP client are short and name the reload or restart step. Long local tasks should use `swag_start_task` plus polling, or `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=0`.
+- The Swag Bot plugin and its skill metadata match package 0.2.0.
 - Local models default to a 1024-token reply cap. The harness timeout grows with that cap, and a timed-out request is retried once with a shorter cap. An aborted run still writes `summary.md`.
 - The final summary keeps one or two sentences from the model and does not repeat the goal-check list.
 - Recalled memories ignore pure numbers, and a different workspace needs a real word in common.
