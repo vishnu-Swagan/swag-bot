@@ -22,16 +22,19 @@ from swag_bot.harness.budget import EscalationBudget
 from swag_bot.harness.checks import deterministic_precheck
 from swag_bot.harness.probe import CapabilityReport, is_probeable, profile_model
 from swag_bot.harness.schema import PLAN_SCHEMA, VERDICT_SCHEMA
-from swag_bot.harness.sizing import estimate_cost_usd, estimate_seconds, request_timeout_seconds
+from swag_bot.harness.sizing import (
+    estimate_cost_usd,
+    estimate_seconds,
+    local_num_predict,
+    request_timeout_seconds,
+)
 from swag_bot.harness.tools import make_picker
 from swag_bot.interfaces import LLMClient
 from swag_bot.models.factory import get_llm_client
 from swag_bot.models.litellm_client import LiteLLMClient
 from swag_bot.models.ollama import OllamaClient
 
-_SCHEMA_PROVIDERS = frozenset(
-    {"ollama", "openai", "anthropic", "gemini", "openrouter", "litellm"}
-)
+_SCHEMA_PROVIDERS = frozenset({"ollama", "openai", "anthropic", "gemini", "openrouter", "litellm"})
 
 
 @dataclass(frozen=True)
@@ -128,12 +131,19 @@ def prepare_harness(settings: Settings, llm: LLMClient) -> PreparedHarness:
         chosen = "standard"
     schema_ok = _schema_ok(settings, report)
     scaffold = _scaffold(chosen, schema_ok=schema_ok)
+    predict = local_num_predict(
+        settings.model.provider,
+        settings.model.num_predict,
+        settings.model.timeout,
+    )
     timeout = request_timeout_seconds(
         settings.model.provider,
         settings.model.model,
         settings.model.timeout,
+        num_predict=predict,
     )
     llm = _apply_timeout(llm, timeout)
+    _apply_generation(llm, settings, report)
     escalation, warning = _escalation(settings)
     note = _note(
         chosen,
@@ -193,13 +203,34 @@ def _has_timeout(llm: LLMClient) -> bool:
     return isinstance(llm, (OllamaClient, LiteLLMClient))
 
 
+def _apply_generation(
+    llm: LLMClient,
+    settings: Settings,
+    report: CapabilityReport | None,
+) -> None:
+    """Send the probed context window when ``model.num_ctx`` was not set."""
+    if not isinstance(llm, (OllamaClient, LiteLLMClient)):
+        return
+    llm.temperature = settings.model.temperature
+    llm.num_predict = local_num_predict(
+        settings.model.provider,
+        settings.model.num_predict,
+        settings.model.timeout,
+    )
+    if settings.model.num_ctx is not None:
+        llm.num_ctx = settings.model.num_ctx
+    elif report is not None and report.context_tokens:
+        llm.num_ctx = int(report.context_tokens)
+
+
 def _escalation(settings: Settings) -> tuple[StepEscalation | None, str]:
     fallback = settings.model.fallback
     provider = fallback.provider.strip().lower()
     model = fallback.model.strip()
     if not provider or not model:
         return None, ""
-    timeout = request_timeout_seconds(provider, model, settings.model.timeout)
+    predict = local_num_predict(provider, settings.model.num_predict, settings.model.timeout)
+    timeout = request_timeout_seconds(provider, model, settings.model.timeout, num_predict=predict)
     try:
         client = get_llm_client(
             settings.model_copy(
@@ -210,6 +241,7 @@ def _escalation(settings: Settings) -> tuple[StepEscalation | None, str]:
                             "model": model,
                             "api_base": fallback.api_base,
                             "timeout": timeout,
+                            "num_predict": predict,
                         }
                     )
                 }

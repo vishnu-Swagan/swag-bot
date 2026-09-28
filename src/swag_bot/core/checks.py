@@ -15,6 +15,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from swag_bot.core.approvals import command_already_approved
 from swag_bot.core.evidence import EvidenceLedger, current_attempt
 from swag_bot.core.executor import _initial_risk, _policy_decision
 from swag_bot.core.parsing import PlanParseError
@@ -52,6 +53,8 @@ _KIND_ALIAS = {
     "exit_code": "exit_code",
     "json": "json_schema",
     "json_schema": "json_schema",
+    "stdout": "stdout",
+    "output": "stdout",
 }
 
 _SHORTHAND = re.compile(
@@ -92,6 +95,13 @@ def describe_check(check: Check) -> str:
     if kind == "exit_code":
         expected = 0 if check.expected_exit is None else check.expected_exit
         return f"{kind}: {expected}"
+    if kind == "stdout":
+        bits: list[str] = []
+        if check.stdout_last_line:
+            bits.append(f"last line {check.stdout_last_line}")
+        if check.stdout_line_count is not None:
+            bits.append(f"{check.stdout_line_count} lines")
+        return "stdout: " + (", ".join(bits) if bits else (check.description or "output"))
     return check.description or kind
 
 
@@ -164,6 +174,22 @@ def derive_checks(text: str) -> list[Check]:
     return found
 
 
+def _latest_output(items: list[Any]) -> Any:
+    """Last command evidence that captured stdout, else the last exit code.
+
+    A later check row can store an exit code and an empty stdout. That row
+    must not hide the command output a line-count check still needs.
+    """
+    chosen = None
+    with_stdout = None
+    for item in items:
+        if item.stdout or item.exit_code is not None:
+            chosen = item
+        if item.stdout:
+            with_stdout = item
+    return with_stdout if with_stdout is not None else chosen
+
+
 class CheckRunner:
     """Run a step's checks through the sandbox and record the evidence."""
 
@@ -206,6 +232,8 @@ class CheckRunner:
                 return self._command(step, check)
             if kind == "exit_code":
                 return self._exit_code(step, check)
+            if kind == "stdout":
+                return self._stdout(step, check)
             if kind == "json_schema":
                 return self._json_schema(step, check)
         except (SandboxError, OSError, UnicodeError) as exc:
@@ -370,6 +398,48 @@ class CheckRunner:
         )
         return cited
 
+    def _stdout(self, step: Step, check: Check) -> CheckResult:
+        """Compare stdout from the latest command evidence for this step.
+
+        Does not re-run the command. A redirect that left stdout empty fails
+        a last-line or line-count requirement even when the exit code was 0.
+        """
+        chosen = _latest_output(self.ledger.for_step(step.id, attempt=current_attempt.get()))
+        if chosen is None:
+            return self._finish(
+                step,
+                check,
+                ok=False,
+                detail=f"{check.id}: command never ran",
+                summary=describe_check(check),
+            )
+        lines = chosen.stdout.splitlines()
+        content = [line for line in lines if line.strip()]
+        problems: list[str] = []
+        if check.stdout_last_line is not None:
+            expected = check.stdout_last_line.strip()
+            actual = content[-1].strip() if content else ""
+            if actual != expected:
+                problems.append(f"last line is {actual!r}, expected {expected!r}")
+        if check.stdout_line_count is not None:
+            if len(lines) != check.stdout_line_count:
+                problems.append(f"{len(lines)} lines, expected {check.stdout_line_count}")
+        ok = not problems
+        detail = (
+            f"{check.id}: output matched"
+            if ok
+            else f"{check.id}: " + "; ".join(problems)
+        )
+        return self._finish(
+            step,
+            check,
+            ok=ok,
+            detail=detail,
+            summary=describe_check(check),
+            exit_code=chosen.exit_code,
+            extra_ids=[chosen.id],
+        )
+
     def _json_schema(self, step: Step, check: Check) -> CheckResult:
         path = (check.path or "").strip()
         if not path:
@@ -518,6 +588,9 @@ class CheckRunner:
         if decision == "deny":
             return False, "policy", action
         if decision == "prompt":
+            command = str(action.arguments.get("command") or action.target or "")
+            if action.kind == ActionKind.RUN_COMMAND.value and command_already_approved(command):
+                return True, "user", action
             approved = bool(self.prompter.prompt(action)) if self.prompter is not None else False
             return approved, "user", action
         if policy.autonomy is AutonomyLevel.AUTO:

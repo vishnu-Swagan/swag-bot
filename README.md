@@ -34,7 +34,7 @@ Specs and model notes: [docs/MODELS.md](docs/MODELS.md), [docs/spec/evidence-con
 
 ## Install
 
-Python 3.11 or newer. The package version for this release is 0.1.0.
+Python 3.11 or newer. The package version for this release is 0.2.0.
 
 From Git, with pip (this tracks the default branch):
 

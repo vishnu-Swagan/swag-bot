@@ -428,8 +428,8 @@ def test_safety_log_shows_actions_from_a_run(
     text = visible(result)
     assert result.exit_code == 0, text
     assert "[done] write Write hello" in text
-    assert (out / "hello.txt").read_text(encoding="utf-8") == "hello"
-    run_log = (out / "run.jsonl").read_text(encoding="utf-8")
+    assert (out / "hello.txt").read_text(encoding="utf-8") == "hello\n"
+    run_log = (out / ".swag" / "run.jsonl").read_text(encoding="utf-8")
     assert EVIDENCE_CONTRACT_SPEC in run_log
     home = ActionLog().read()
     assert home
@@ -491,14 +491,14 @@ def test_cli_reports_a_failed_script_with_evidence(
     text = visible(result)
     assert result.exit_code == 1, text
     assert "[failed] tests Run the script" in text
-    plan = json.loads((out / "plan.json").read_text(encoding="utf-8"))
+    plan = json.loads((out / ".swag" / "plan.json").read_text(encoding="utf-8"))
     assert plan["steps"][0]["status"] == "failed"
     summary = (out / "summary.md").read_text(encoding="utf-8")
     assert "exited 1, expected 0" in summary
     assert "evidence:" in summary
     records = [
         RunRecord.model_validate_json(line)
-        for line in (out / "run.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (out / ".swag" / "run.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     exits = [item.evidence.exit_code for item in records if item.evidence is not None]
     assert 1 in exits

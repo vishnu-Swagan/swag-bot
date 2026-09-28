@@ -961,6 +961,11 @@ class Check(BaseModel):
     kind fails that check at run time.
 
     ``schema`` in JSON is accepted as an alias of ``json_schema``.
+
+    ``stdout`` checks compare captured command output. ``stdout_last_line`` is
+    the exact last non-empty line. ``stdout_line_count`` counts every line,
+    including blanks. A single trailing newline does not add a line. Both
+    default to unset so older checks still load.
     """
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
@@ -974,6 +979,8 @@ class Check(BaseModel):
     expected_exit: int | None = None
     json_schema: dict[str, Any] | None = None
     timeout: float | None = None
+    stdout_last_line: str | None = None
+    stdout_line_count: int | None = None
 
     @model_validator(mode="before")
     @classmethod

@@ -45,6 +45,10 @@ if ($PypiPublished -eq 1) {
   $Spec = "swag-bot[mcp,models] @ $GitInstallUrl"
 }
 
+if ($env:SWAG_REF -and $Spec -like "*git+*") {
+  $Spec = "$Spec@$($env:SWAG_REF)"
+}
+
 function Invoke-Step([string[]]$Command) {
   if ($DryRun) {
     Write-Output ("would run: " + ($Command -join " "))
@@ -53,9 +57,10 @@ function Invoke-Step([string[]]$Command) {
   & $Command[0] $Command[1..($Command.Length - 1)]
 }
 
+$OriginalPath = $env:PATH
 $LocalBin = Join-Path $env:USERPROFILE ".local\bin"
 if (Test-Path $LocalBin) {
-  $env:PATH = "$LocalBin;$env:PATH"
+  $env:PATH = "$LocalBin;$OriginalPath"
 }
 
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
@@ -80,14 +85,43 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 
 Write-Output "Model choices (local and free cloud): https://github.com/vishnu-Swagan/swag-bot/blob/main/docs/MODELS.md"
 
-Invoke-Step @("uv", "tool", "install", $Spec)
+Invoke-Step @("uv", "tool", "install", "--quiet", $Spec)
+
+$BinDir = Join-Path $env:USERPROFILE ".local\bin"
+if ($DryRun) {
+  Write-Output "would run: uv tool update-shell"
+} else {
+  $uv = Get-Command uv -ErrorAction SilentlyContinue
+  if ($uv) {
+    try {
+      $discovered = (& $uv.Source tool dir --bin 2>$null)
+      if ($discovered) { $BinDir = "$discovered".Trim() }
+    } catch {}
+    $saved = $env:PATH
+    $env:PATH = $OriginalPath
+    try { & $uv.Source tool update-shell | Out-Null } catch {}
+    $env:PATH = $saved
+  }
+}
+$env:PATH = "$BinDir;$env:PATH"
+$already = @($OriginalPath -split ';' | Where-Object { $_ -eq $BinDir })
+if ($already.Count -eq 0) {
+  Write-Output "swag is not on PATH for new shells yet. Open a new shell, or add it for this one:"
+  Write-Output "  `$env:PATH = `"$BinDir;`$env:PATH`""
+  Write-Output "uv tool update-shell records that directory when it is missing from PATH."
+}
+
+$SwagBin = Join-Path $BinDir "swag.exe"
+if (-not (Test-Path $SwagBin)) {
+  $SwagBin = Join-Path $BinDir "swag"
+}
 
 if ($AssumeYes) {
-  Invoke-Step @("swag", "setup", "--auto", "--yes")
+  Invoke-Step @($SwagBin, "setup", "--auto", "--yes")
 } else {
-  Invoke-Step @("swag", "setup", "--auto")
+  Invoke-Step @($SwagBin, "setup", "--auto")
 }
 
 if ($SwagArgs.Count -gt 0) {
-  Invoke-Step (@("swag") + $SwagArgs)
+  Invoke-Step (@($SwagBin) + $SwagArgs)
 }

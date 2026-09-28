@@ -7,8 +7,10 @@ and evidence ids when a ledger supplied them.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from swag_bot.interfaces import (
@@ -18,6 +20,20 @@ from swag_bot.interfaces import (
     MemoryStore,
     RiskLevel,
 )
+
+# Words that show up in almost every goal. They must not make an unrelated
+# memory look relevant (a squares run injected into a later fizzbuzz run).
+_STOP = frozenset(
+    """
+    a an the to of and or for with that this it is was were be been being
+    write create save run execute check verify read file files print prints
+    printed number numbers line lines output script code text txt csv py
+    using from into in on at by one per each last its own not but you your
+    goal step done met python python3
+    """.split()
+)
+_TOKEN = re.compile(r"[a-z0-9_]+")
+MEMORY_RELEVANCE_THRESHOLD = 0.2
 
 MEMORY_MODES = frozenset({"ask", "auto", "off"})
 
@@ -45,9 +61,10 @@ def provenance_metadata(
     goal: str,
     step_id: str = "",
     evidence_ids: Sequence[str] = (),
+    workspace: str = "",
 ) -> dict[str, Any]:
     """Metadata stored with one memory so a later recall can say where it came from."""
-    return {
+    payload: dict[str, Any] = {
         "source": "swag",
         "kind": kind,
         "run_id": run_id,
@@ -55,6 +72,85 @@ def provenance_metadata(
         "step_id": step_id,
         "evidence_ids": [str(item) for item in evidence_ids],
     }
+    if workspace.strip():
+        payload["workspace"] = workspace.strip()
+    return payload
+
+
+def memory_tokens(text: str) -> set[str]:
+    """Distinctive words. Stopwords, pure numbers, and short tokens are dropped."""
+    found: set[str] = set()
+    for token in _TOKEN.findall(text.casefold()):
+        if token in _STOP or token.isdigit() or len(token) < 3:
+            continue
+        found.add(token)
+    return found
+
+
+def memory_relevance(goal: str, item: MemoryItem, *, workspace: str = "") -> float:
+    """Overlap of the goal's distinctive words with the memory and its goal.
+
+    The score is the share of the goal's meaningful tokens that also appear
+    in the memory. Pure numbers do not count. A memory from a different
+    workspace scores 0 unless that overlap is already strong.
+    """
+    goal_tokens = memory_tokens(goal)
+    if not goal_tokens:
+        return 0.0
+    remembered = memory_tokens(item.content)
+    remembered.update(memory_tokens(str(item.metadata.get("goal") or "")))
+    overlap = goal_tokens & remembered
+    if not overlap:
+        return 0.0
+    score = len(overlap) / len(goal_tokens)
+    stored = str(item.metadata.get("workspace") or "").strip()
+    current = workspace.strip()
+    if stored and current and not _same_workspace(stored, current) and score < 0.5:
+        return 0.0
+    return score
+
+
+def relevant_memories(
+    items: Sequence[MemoryItem],
+    goal: str,
+    *,
+    workspace: str = "",
+    threshold: float = MEMORY_RELEVANCE_THRESHOLD,
+    limit: int = 5,
+) -> list[MemoryItem]:
+    """Memories similar enough to ``goal`` to show the planner.
+
+    A memory from a different workspace needs a stronger overlap. Memories
+    with no shared distinctive words are dropped even when full-text search
+    matched a stopword such as ``write``.
+    """
+    if limit <= 0:
+        return []
+    ranked: list[tuple[float, int, MemoryItem]] = []
+    for index, item in enumerate(items):
+        score = memory_relevance(goal, item, workspace=workspace)
+        needed = _relevance_threshold(item, workspace, threshold)
+        if score >= needed:
+            ranked.append((score, index, item))
+    ranked.sort(key=lambda row: (-row[0], row[1]))
+    return [item for _score, _index, item in ranked[:limit]]
+
+
+def _relevance_threshold(item: MemoryItem, workspace: str, threshold: float) -> float:
+    stored = str(item.metadata.get("workspace") or "").strip()
+    current = workspace.strip()
+    if not stored or not current:
+        return threshold
+    if _same_workspace(stored, current):
+        return min(threshold, 0.15)
+    return max(threshold, 0.5)
+
+
+def _same_workspace(left: str, right: str) -> bool:
+    try:
+        return Path(left).expanduser().resolve() == Path(right).expanduser().resolve()
+    except OSError:
+        return left == right
 
 
 def label_memory(item: MemoryItem) -> str:

@@ -114,7 +114,7 @@ def test_accepted_elicitation_writes_the_file(tmp_path: Path) -> None:
     assert seen, text
     files = list(work.rglob("hello.txt"))
     assert len(files) == 1
-    assert files[0].read_text(encoding="utf-8") == "hello"
+    assert files[0].read_text(encoding="utf-8") == "hello\n"
     assert "Wrote hello.txt." in text
 
 
@@ -143,4 +143,4 @@ def test_preapproved_write_does_not_elicit(tmp_path: Path) -> None:
     _assert_protocol_clean(err)
     files = list(work.rglob("hello.txt"))
     assert len(files) == 1, text
-    assert files[0].read_text(encoding="utf-8") == "hello"
+    assert files[0].read_text(encoding="utf-8") == "hello\n"

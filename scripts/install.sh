@@ -64,6 +64,14 @@ else
   SPEC="swag-bot[mcp,models] @ ${GIT_INSTALL_URL}"
 fi
 
+# Optional git ref, for example SWAG_REF=v0.2.0 or a branch name.
+# PEP 508 allows @ref only on a direct git URL.
+if [ -n "${SWAG_REF:-}" ]; then
+  case "$SPEC" in
+    *git+*) SPEC="${SPEC}@${SWAG_REF}" ;;
+  esac
+fi
+
 say() {
   printf '%s\n' "$1"
 }
@@ -98,8 +106,11 @@ ask() {
   esac
 }
 
-# Astral's installer puts uv on ~/.local/bin. Do not print the environment.
-export PATH="${HOME:-}/.local/bin:${PATH:-}"
+# Astral's installer puts uv on ~/.local/bin. Remember the caller's PATH
+# before this prepend. `uv tool update-shell` treats a directory that is
+# already on PATH as persisted, so it must see the original PATH.
+ORIGINAL_PATH="${PATH:-}"
+export PATH="${HOME:-}/.local/bin:${ORIGINAL_PATH}"
 
 if ! command -v uv >/dev/null 2>&1; then
   if [ "$DRY_RUN" = 1 ]; then
@@ -115,15 +126,39 @@ fi
 
 say "Model choices (local and free cloud): https://github.com/vishnu-Swagan/swag-bot/blob/main/docs/MODELS.md"
 
-run_cmd uv tool install "$SPEC"
-export PATH="${HOME:-}/.local/bin:${PATH:-}"
+run_cmd uv tool install --quiet "$SPEC"
 
-if [ "$ASSUME_YES" = 1 ]; then
-  run_cmd swag setup --auto --yes
+BIN_DIR="${HOME:-}/.local/bin"
+if [ "$DRY_RUN" = 1 ]; then
+  say "would run: uv tool update-shell"
 else
-  run_cmd swag setup --auto
+  UV_BIN=$(command -v uv || true)
+  if [ -n "$UV_BIN" ]; then
+    DISCOVERED=$("$UV_BIN" tool dir --bin 2>/dev/null || true)
+    if [ -n "$DISCOVERED" ]; then
+      BIN_DIR=$DISCOVERED
+    fi
+    # Invoke uv by path so PATH can be the caller's original value.
+    PATH="${ORIGINAL_PATH}" "$UV_BIN" tool update-shell >/dev/null 2>&1 || true
+  fi
+fi
+export PATH="${BIN_DIR}:${PATH:-}"
+case ":${ORIGINAL_PATH}:" in
+  *":${BIN_DIR}:"*) ;;
+  *)
+    say "swag is not on PATH for new shells yet. Open a new shell, or add it for this one:"
+    say "  export PATH=\"${BIN_DIR}:\$PATH\""
+    say "uv tool update-shell records that directory when it is missing from PATH."
+    ;;
+esac
+
+SWAG_BIN="${BIN_DIR}/swag"
+if [ "$ASSUME_YES" = 1 ]; then
+  run_cmd "$SWAG_BIN" setup --auto --yes
+else
+  run_cmd "$SWAG_BIN" setup --auto
 fi
 
 if [ $# -gt 0 ]; then
-  run_cmd swag "$@"
+  run_cmd "$SWAG_BIN" "$@"
 fi

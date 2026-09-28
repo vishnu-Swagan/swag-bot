@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Local models default to a 1024-token reply cap. The harness timeout grows with that cap, and a timed-out request is retried once with a shorter cap. An aborted run still writes `summary.md`.
+- The final summary keeps one or two sentences from the model and does not repeat the goal-check list.
+- Recalled memories ignore pure numbers, and a different workspace needs a real word in common.
+- `install.sh` runs `uv tool update-shell` with the original `PATH` and prints the PATH hint only when the tool directory is missing.
+
 ## [0.2.0] - 2026-09-27
 
-Integrated on `integration/v0.2`. Not tagged, and the package version stays 0.1.0.
+Package version 0.2.0. Not tagged.
 
 ### Added
 

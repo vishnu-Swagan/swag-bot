@@ -346,8 +346,10 @@ class RunRecorder:
         """Copy ``run.jsonl`` if a ledger wrote it after the bundle was sealed."""
         if self.destination is None:
             return
-        source = output_dir / "run.jsonl"
-        if not source.is_file():
+        from swag_bot.core.artifacts import find_run_log
+
+        source = find_run_log(output_dir)
+        if source is None:
             return
         target = self.destination / "evidence" / "run.jsonl"
         target.parent.mkdir(parents=True, exist_ok=True)

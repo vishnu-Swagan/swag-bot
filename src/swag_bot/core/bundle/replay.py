@@ -24,6 +24,7 @@ from swag_bot.core.bundle.redact import redact_text
 from swag_bot.core.bundle.store import LoadedBundle, load_bundle, read_jsonl
 from swag_bot.core.fallbacks import FallbackPolicy, LocalSandbox
 from swag_bot.core.loop import PlanDoVerifyLoop
+from swag_bot.core.tools import normalize_written_text
 from swag_bot.errors import SwagError
 from swag_bot.interfaces import (
     ActionRequest,
@@ -278,6 +279,7 @@ def _make_loop(
         "max_attempts": _positive(manifest.get("max_attempts"), 2),
         "concurrency": _positive(manifest.get("concurrency"), 1),
         "engine": str(manifest.get("engine") or "python"),
+        "show_memory": False,
     }
     # strict_plan and memory_mode are recorded for the step-handoff work.
     # Pass them only when this checkout's loop already accepts them.
@@ -411,6 +413,7 @@ def _replay_write(workdir: Path, arguments: Mapping[str, Any]) -> None:
         return
     content = arguments.get("content", "")
     text = content if isinstance(content, str) else str(content)
+    text = normalize_written_text(raw, text)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")
 

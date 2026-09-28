@@ -36,7 +36,8 @@ def test_builtin_tools_use_the_sandbox(tmp_path: Path) -> None:
     )
     assert wrote == "wrote notes/a.txt"
     assert (
-        registry.call(ToolCall(id="2", name="read_file", arguments={"path": "notes/a.txt"})) == "hi"
+        registry.call(ToolCall(id="2", name="read_file", arguments={"path": "notes/a.txt"}))
+        == "hi\n"
     )
     text = registry.call(
         ToolCall(id="3", name="run_shell", arguments={"command": "echo hi", "timeout": 2})
@@ -110,9 +111,10 @@ def test_display_labels_and_artifacts(tmp_path: Path) -> None:
         outcome="ok",
     )
     write_run_artifacts(directory, plan, [entry], "# Summary\n\nDone.\n")
-    assert (directory / "plan.json").is_file()
+    assert (directory / ".swag" / "plan.json").is_file()
+    assert not (directory / "plan.json").exists()
     assert (directory / "summary.md").read_text(encoding="utf-8").startswith("# Summary")
-    line = (directory / "action-log.jsonl").read_text(encoding="utf-8").strip()
+    line = (directory / ".swag" / "action-log.jsonl").read_text(encoding="utf-8").strip()
     assert ActionLogEntry.model_validate_json(line).outcome == "ok"
     stamp = default_output_dir()
     assert stamp.parts[0] == "swag-output"

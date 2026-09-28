@@ -199,7 +199,9 @@ class BundleRunReplayer:
                     max_attempts=2,
                     concurrency=1,
                 )
-                plan_path = destination / "plan.json"
+                from swag_bot.core.artifacts import artifact_file
+
+                plan_path = artifact_file(destination, "plan.json")
                 if not plan_path.is_file():
                     return _result(request, ReplayOutcome.FAILED, "live replay wrote no plan")
                 statuses = _step_statuses(plan_path)

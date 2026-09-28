@@ -80,10 +80,10 @@ def test_dry_run_writes_plan_and_does_not_execute(
         ["run", "write hello", "--dry-run", "--output-dir", str(out), "--model", "demo-model"],
     )
     assert result.exit_code == 0, _visible(result)
-    plan = json.loads((out / "plan.json").read_text(encoding="utf-8"))
+    plan = json.loads((out / ".swag" / "plan.json").read_text(encoding="utf-8"))
     assert plan["goal"] == "write hello"
     assert plan["steps"][0]["status"] == "pending"
-    assert (out / "action-log.jsonl").read_text(encoding="utf-8") == ""
+    assert (out / ".swag" / "action-log.jsonl").read_text(encoding="utf-8") == ""
     summary = (out / "summary.md").read_text(encoding="utf-8")
     assert "Dry run" in summary
     assert "[pending] write Write hello" in _visible(result)
@@ -130,10 +130,10 @@ def test_run_writes_artifacts_and_streams_status(
     )
     text = _visible(result)
     assert result.exit_code == 0, text
-    assert (out / "hello.txt").read_text(encoding="utf-8") == "hello"
+    assert (out / "hello.txt").read_text(encoding="utf-8") == "hello\n"
     assert "[done] write Write hello" in text
     assert "wrote hello.txt" in text
-    log = (out / "action-log.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    log = (out / ".swag" / "action-log.jsonl").read_text(encoding="utf-8").strip().splitlines()
     assert log
     write_lines = [line for line in log if "write_file" in line]
     assert len(write_lines) == 1
@@ -154,7 +154,7 @@ def test_default_output_dir_and_graphbit_fallback(
     assert "not installed" in text
     folders = list((tmp_path / "swag-output").iterdir())
     assert len(folders) == 1
-    assert (folders[0] / "plan.json").is_file()
+    assert (folders[0] / ".swag" / "plan.json").is_file()
     assert (folders[0] / "summary.md").is_file()
 
 
@@ -191,13 +191,17 @@ def test_approval_run_prints_each_line_once(
     assert result.exit_code == 0, text
     assert text.count("[done] write Write hello") == 1
     assert text.count("[write] wrote hello.txt") == 1
-    assert text.count("# Summary") == 1
-    assert "remembered:" in text
-    assert "evidence none" in text
+    assert "# Summary" not in text
+    assert "**" not in text
+    assert "```" not in text
+    assert "remembered:" not in text
+    summary = (out / "summary.md").read_text(encoding="utf-8")
+    assert summary.count("# Summary") == 1
+    assert "## Memory" not in summary
     for line in text.splitlines():
         if "Allow this action" in line:
             assert "write_file" not in line
-    assert (out / "hello.txt").read_text(encoding="utf-8") == "hello"
+    assert (out / "hello.txt").read_text(encoding="utf-8") == "hello\n"
 
 
 def test_strict_plan_exits_when_the_model_is_unreadable(
@@ -242,6 +246,7 @@ def test_recalled_memory_is_announced(
         dry_run=True,
         output_dir=tmp_path / "out",
         announce=notes.append,
+        verbose=True,
         on_event=lambda event: None,
     )
     assert result.exit_code == 0
@@ -280,7 +285,7 @@ def test_denied_write_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     )
     assert result.exit_code == 1, _visible(result)
     assert not (out / "hello.txt").exists()
-    assert "denied" in (out / "action-log.jsonl").read_text(encoding="utf-8")
+    assert "denied" in (out / ".swag" / "action-log.jsonl").read_text(encoding="utf-8")
 
 
 def test_unknown_engine_exits_1(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -17,7 +17,7 @@ from typing import Annotated, Any
 import typer
 
 from swag_bot.config import EscalationSettings, Settings, TaintMode, load_settings
-from swag_bot.core.artifacts import default_output_dir, write_run_artifacts
+from swag_bot.core.artifacts import default_output_dir, internal_dir, write_run_artifacts
 from swag_bot.core.bundle.cli import bundle_app, replay_command
 from swag_bot.core.bundle.record import RunRecorder
 from swag_bot.core.display import PromptSuspender, RunProgress, TaskListView
@@ -31,13 +31,15 @@ from swag_bot.core.memory_journal import (
     normalize_memory_mode,
     provenance_metadata,
     recall_lines,
+    relevant_memories,
 )
 from swag_bot.core.reversibility import (
     ReversibilityClassifier,
     StubReversibilityClassifier,
     adapt_classifier,
 )
-from swag_bot.core.tools import register_builtin_tools
+from swag_bot.core.summary import aborted_summary, render_for_terminal
+from swag_bot.core.tools import python_interpreter_note, register_builtin_tools
 from swag_bot.errors import ConfigError, NotImplementedYet, SwagError
 from swag_bot.harness.session import prepare_harness
 from swag_bot.interfaces import (
@@ -54,6 +56,7 @@ from swag_bot.interfaces import (
     SkillMeta,
     StepStatus,
     TaintTracker,
+    TaskPlan,
     ToolRegistry,
     TrustLevel,
 )
@@ -103,8 +106,9 @@ def run(
     output_dir: Annotated[
         Path | None,
         typer.Option(
-            help="Directory for plan.json, action-log.jsonl, run.jsonl, and summary.md. "
-            "Defaults to ./swag-output/<UTC timestamp>."
+            help="Directory for the task's files and summary.md. "
+            "plan.json, action-log.jsonl, run.jsonl, and evidence go in <dir>/.swag/. "
+            "Defaults to ./swag-output/<local timestamp>."
         ),
     ] = None,
     max_steps: Annotated[int, typer.Option(help="Maximum number of plan steps.")] = 8,
@@ -177,6 +181,14 @@ def run(
         Path | None,
         typer.Option("--bundle", help="Directory for the run bundle. Implies --record."),
     ] = None,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-v",
+            help="Print recalled memories and the memory section. Quiet by default.",
+        ),
+    ] = False,
 ) -> None:
     """Plan, do, and verify a multi-step task."""
     from swag_bot.onboarding.setup import first_run_if_needed
@@ -216,6 +228,7 @@ def run(
                 escalate=escalate,
                 record=record,
                 bundle_dir=bundle,
+                verbose=verbose,
             )
     except (ValueError, SwagError) as exc:
         view.print_final()
@@ -223,7 +236,7 @@ def run(
         raise typer.Exit(code=1) from exc
     view.print_final()
 
-    typer.echo(result.summary.rstrip())
+    typer.echo(render_for_terminal(result.summary))
     typer.echo(f"Output: {result.output_dir}")
     if result.bundle_dir is not None:
         typer.echo(f"Bundle: {result.bundle_dir}")
@@ -259,6 +272,7 @@ def execute_goal(
     prepare_tools: Callable[[InMemoryToolRegistry], None] | None = None,
     policy_wrapper: Callable[[PermissionPolicy], PermissionPolicy] | None = None,
     context_prefix: str = "",
+    verbose: bool = False,
 ) -> GoalResult:
     """Run one goal with the configured model, sandbox, policy, tools, and memory.
 
@@ -319,6 +333,8 @@ def execute_goal(
     session_llm: LLMClient = prepared.llm
     destination = output_dir if output_dir is not None else default_output_dir()
     destination.mkdir(parents=True, exist_ok=True)
+    hidden = internal_dir(destination)
+    hidden.mkdir(parents=True, exist_ok=True)
     sandbox = _sandbox(active, destination)
     memory = _memory(active)
     active_policy = _policy(active, destination)
@@ -374,12 +390,15 @@ def execute_goal(
         plugins,
         tracker,
         active.taint.memory,
-        announce=announce,
+        announce=announce if verbose else None,
         mode=active.memory.mode,
+        workspace=str(Path.cwd()),
     )
     prefix = context_prefix.strip()
     if prefix:
         context = f"{prefix}\n\n{context}" if context else prefix
+    interpreter = python_interpreter_note()
+    context = f"{interpreter}\n\n{context}" if context else interpreter
     if recorder is not None:
         recorder.planner_context = context
         recorder.tool_names = [tool.name for tool in tools.list_tools()]
@@ -410,13 +429,15 @@ def execute_goal(
             strict_plan=strict_plan,
             memory_mode=active.memory.mode,
             action_sink=persist,
-            evidence_dir=destination,
+            evidence_dir=hidden,
             evidence_enabled=evidence_enabled,
             undo=undo,
             taint=tracker,
             escalation=escalation,
             scaffold=prepared.scaffold,
             model_escalation=prepared.escalation,
+            show_memory=verbose,
+            workspace=str(Path.cwd()),
         )
     except (ValueError, SwagError):
         if mcp_client is not None:
@@ -446,13 +467,16 @@ def execute_goal(
             mode=active.memory.mode,
             prompter=active_prompter,
             run_id=plan.id,
-            announce=announce,
+            announce=announce if verbose else None,
+            workspace=str(Path.cwd()),
         )
-        if saved:
+        if saved and verbose:
             loop.summary_text = append_remembered(loop.summary_text, saved)
         failed = any(
             step.status in {StepStatus.FAILED, StepStatus.UNVERIFIED} for step in plan.steps
         )
+        unmet = bool(loop.goal_results) and not loop.goal_met
+        exit_code = 1 if failed or unmet else 0
         if recorder is not None:
             written = recorder.finish(
                 bundle_dir if bundle_dir is not None else destination / "bundle",
@@ -460,7 +484,7 @@ def execute_goal(
                 results=dict(loop.results),
                 action_log=list(loop.action_log),
                 summary=bundle_summary,
-                exit_code=1 if failed else 0,
+                exit_code=exit_code,
                 output_dir=destination,
                 workdir=sandbox.workdir,
                 strict_plan=_flag(loop, "strict_plan"),
@@ -469,10 +493,18 @@ def execute_goal(
         return GoalResult(
             summary=loop.summary_text,
             output_dir=destination,
-            exit_code=1 if failed else 0,
+            exit_code=exit_code,
             engine_note=loop.engine_note,
             bundle_dir=written,
         )
+    except Exception as exc:
+        if plan is None:
+            plan = loop._plan or TaskPlan(goal=goal, steps=[])
+        if not loop.summary_text.strip():
+            loop.summary_text = aborted_summary(goal, str(exc), plan)
+        if not bundle_summary:
+            bundle_summary = loop.summary_text
+        raise
     finally:
         if plan is not None:
             write_run_artifacts(
@@ -727,10 +759,11 @@ def _planner_context(
     *,
     announce: Callable[[str], None] | None = None,
     mode: str = "auto",
+    workspace: str = "",
 ) -> str:
     sections: list[str] = []
     if mode != "off":
-        items = _recall_items(memory, goal)
+        items = _recall_items(memory, goal, workspace=workspace)
         recalled = recall_lines(items)
         if recalled and announce is not None:
             for line in recalled:
@@ -749,11 +782,17 @@ def _planner_context(
     return "\n\n".join(sections)
 
 
-def _recall_items(memory: MemoryStore, goal: str) -> list[MemoryItem]:
+def _recall_items(
+    memory: MemoryStore,
+    goal: str,
+    *,
+    workspace: str = "",
+) -> list[MemoryItem]:
     try:
-        return list(memory.search(goal, limit=5))
+        hits = list(memory.search(goal, limit=8))
     except Exception:
         return []
+    return relevant_memories(hits, goal, workspace=workspace, limit=5)
 
 
 def _skill_blocks(goal: str, plugins: PluginRegistry | None) -> list[tuple[str, str]]:
@@ -783,6 +822,7 @@ def _save_summary(
     prompter: ApprovalPrompter,
     run_id: str,
     announce: Callable[[str], None] | None,
+    workspace: str = "",
 ) -> str:
     """Save the run summary. Return the ``remembered:`` line when it was stored."""
     text = summary.strip()
@@ -791,7 +831,9 @@ def _save_summary(
         text,
         mode=mode,
         prompter=prompter,
-        metadata=provenance_metadata(run_id=run_id, kind="run-summary", goal=goal),
+        metadata=provenance_metadata(
+            run_id=run_id, kind="run-summary", goal=goal, workspace=workspace
+        ),
     )
     if notice is None:
         return ""

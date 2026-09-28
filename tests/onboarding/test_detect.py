@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from swag_bot.models.keys import PROVIDER_ENV_VARS
 from swag_bot.onboarding.detect import (
     BYOK_CANDIDATES,
@@ -84,5 +86,14 @@ def test_missing_ollama_tells_the_user_where_to_install_it() -> None:
     assert "does not install" in decision.message
 
 
-def test_daemon_probe_fails_closed_when_nothing_is_listening() -> None:
+def test_daemon_probe_fails_closed_when_nothing_is_listening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import socket
+
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    monkeypatch.setenv("OLLAMA_HOST", f"http://127.0.0.1:{port}")
     assert fetch_ollama_models(timeout=0.2) is None

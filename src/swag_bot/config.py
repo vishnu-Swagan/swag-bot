@@ -144,8 +144,12 @@ class ModelSettings(BaseModel):
 
     ``timeout`` is the HTTP timeout in seconds. Omitted means the client
     default (120). The small-model harness raises that for local models when
-    ``harness`` is not ``off``. ``harness`` is ``auto``, ``off``, ``tiny``,
-    ``standard``, or ``frontier``.
+    ``harness`` is not ``off``, scaling it with ``num_predict``, and retries
+    a timed-out request once with a shorter cap. ``temperature``, ``num_ctx``,
+    and ``num_predict`` are sent with each Ollama request (``num_ctx`` is
+    filled from the harness probe when unset). Local ``num_predict`` defaults
+    to 1024 and is capped there unless ``timeout`` is set. ``harness`` is
+    ``auto``, ``off``, ``tiny``, ``standard``, or ``frontier``.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -154,6 +158,9 @@ class ModelSettings(BaseModel):
     model: str = "llama3.2"
     api_base: str | None = None
     timeout: float | None = None
+    temperature: float = 0.2
+    num_ctx: int | None = None
+    num_predict: int = 1024
     harness: str = "auto"
     fallback: FallbackModelSettings = Field(default_factory=FallbackModelSettings)
     budget: ModelBudgetSettings = Field(default_factory=ModelBudgetSettings)
@@ -173,6 +180,27 @@ class ModelSettings(BaseModel):
     def _timeout(cls, value: float | None) -> float | None:
         if value is not None and value <= 0:
             raise ValueError("model.timeout must be greater than 0")
+        return value
+
+    @field_validator("temperature")
+    @classmethod
+    def _temperature(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("model.temperature must be >= 0")
+        return value
+
+    @field_validator("num_ctx")
+    @classmethod
+    def _num_ctx(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("model.num_ctx must be greater than 0")
+        return value
+
+    @field_validator("num_predict")
+    @classmethod
+    def _num_predict(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("model.num_predict must be greater than 0")
         return value
 
 

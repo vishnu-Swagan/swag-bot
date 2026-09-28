@@ -62,11 +62,11 @@ When passed is true, replan must be false.
 """
 
 SUMMARIZER_SYSTEM = f"""{SUMMARIZER_PREFIX}
-Write a short markdown summary of a finished task for the person who asked.
-Lead with whether the goal was met. Mention failed or skipped steps and why.
+Write one or two plain sentences about what happened.
+Do not say whether the goal was met. The record already says that.
+Do not list checks, steps, evidence ids, or a Goal, Steps, or Result section.
+Do not use markdown, bold, backticks, or a code fence.
 Do not invent results that are not in the step record.
-Do not start with a heading named Summary. Do not repeat the step list.
-Do not wrap the answer in a code fence.
 """
 
 # Shorter prompts for a tiny scaffold. They describe the shape in words and
@@ -80,8 +80,10 @@ id is a new short word for this goal, with no spaces.
 title is one line about this goal.
 instruction says what to do, then a line that starts with "Done when:".
 depends_on is an array of earlier ids from this plan, or an empty array.
-Use as few steps as possible. Writing one file and running or reading it is one step.
-If the goal names one file, return one step, not a write step plus a run step.
+Use as few steps as possible. Writing one file and running or reading it may be one step.
+If the goal names one file, one step may do the work, but the instruction must
+include every action the goal asks for: write, run, execute, check, verify, or read.
+Do not drop a run, a check, or a read just to keep the plan short.
 Stay at or under the step limit.
 Do not copy wording from this prompt into the JSON values.
 """
@@ -91,7 +93,9 @@ Do the one step below. Use a tool when the step needs a file or a command.
 Call each tool once. If you write a file the step also says to run, run it next.
 If the shell says a program is not found, call the tool once more with a different program name.
 Then stop. Reply with one sentence about what the tool returned.
-Do not rewrite a file you already wrote. Do not invent command output.
+Do not rewrite a file you already wrote in this attempt. If a retry says the
+previous file failed, write that file again before you run it.
+Do not invent command output.
 If an action is denied, say so and stop.
 """
 

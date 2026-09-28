@@ -30,8 +30,15 @@ _USD_PER_CALL = {
 }
 
 # Big local models on CPU regularly outlive the client's historical 120s cap.
-_SMALL_LOCAL_TIMEOUT = 300.0
-_LARGE_LOCAL_TIMEOUT = 600.0
+# A timed-out request is retried once, with a shorter reply cap, so these stay
+# well under a 10 minute hang when num_predict is the local default.
+_SMALL_LOCAL_TIMEOUT = 120.0
+_LARGE_LOCAL_TIMEOUT = 180.0
+# About 10 tokens/second on a CPU, plus slack for the prompt.
+_SECONDS_PER_TOKEN = 0.1
+_PROMPT_SLACK_SECONDS = 30.0
+# Local models stay at this cap unless the user set model.timeout.
+LOCAL_PREDICT_CAP = 1024
 
 
 def parameter_billions(model: str) -> float | None:
@@ -45,22 +52,42 @@ def parameter_billions(model: str) -> float | None:
     return _KNOWN_BILLIONS.get(model.strip().lower())
 
 
-def request_timeout_seconds(provider: str, model: str, configured: float | None) -> float | None:
+def local_num_predict(provider: str, configured: int, timeout: float | None) -> int:
+    """Cap a local reply when the user did not set a longer timeout.
+
+    An explicit ``model.timeout`` keeps ``configured`` so a long reply is
+    allowed. Otherwise Ollama stays at ``LOCAL_PREDICT_CAP`` tokens.
+    """
+    if provider.strip().lower() != "ollama" or timeout is not None:
+        return configured
+    return min(configured, LOCAL_PREDICT_CAP)
+
+
+def request_timeout_seconds(
+    provider: str,
+    model: str,
+    configured: float | None,
+    *,
+    num_predict: int | None = None,
+) -> float | None:
     """Timeout to use while the harness is on.
 
-    An explicit ``model.timeout`` always wins. Otherwise local models get
-    longer than the 120 second client default: 300 seconds under 7B, and
-    600 seconds at 7B and above, where CPU inference often exceeds 120 seconds.
-    Cloud providers keep the client default.
+    An explicit ``model.timeout`` always wins. Otherwise local models get at
+    least 120 seconds under 7B and 180 seconds at 7B and above. The timeout
+    also grows with ``num_predict`` at about 10 tokens per second, so a long
+    cap is not cut off at 180 seconds. A request that times out is retried
+    once, with a shorter cap. Cloud providers keep the client default.
     """
     if configured is not None:
         return configured
     if provider.strip().lower() != "ollama":
         return None
     size = parameter_billions(model)
-    if size is not None and size >= 7:
-        return _LARGE_LOCAL_TIMEOUT
-    return _SMALL_LOCAL_TIMEOUT
+    floor = _LARGE_LOCAL_TIMEOUT if size is not None and size >= 7 else _SMALL_LOCAL_TIMEOUT
+    if num_predict is None or num_predict <= 0:
+        return floor
+    generated = num_predict * _SECONDS_PER_TOKEN + _PROMPT_SLACK_SECONDS
+    return max(floor, generated)
 
 
 def estimate_cost_usd(provider: str) -> float:

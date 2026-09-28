@@ -141,8 +141,8 @@ def test_swag_run_selects_a_skill_saves_memory_and_writes_summary(
     assert result.exit_code == 0, text
     written = (out / "summary.md").read_text(encoding="utf-8")
     assert summary in written
-    assert (out / "plan.json").is_file()
-    plan = json.loads((out / "plan.json").read_text(encoding="utf-8"))
+    assert (out / ".swag" / "plan.json").is_file()
+    plan = json.loads((out / ".swag" / "plan.json").read_text(encoding="utf-8"))
     assert plan["goal"] == "github issue"
     assert plan["steps"][0]["status"] == "done"
 

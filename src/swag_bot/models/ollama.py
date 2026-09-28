@@ -7,6 +7,7 @@ comes from ``settings.model.api_base`` when that is set, otherwise from
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from collections.abc import Iterator, Mapping, Sequence
@@ -20,6 +21,7 @@ from swag_bot.interfaces import (
     Tool,
 )
 from swag_bot.models.errors import ModelError, ToolCallingUnsupported
+from swag_bot.models.generation import CONCISE_NUDGE, DEFAULT_NUM_PREDICT, retry_num_predict
 from swag_bot.models.hints import explain_ollama_http
 from swag_bot.models.http import HTTPTransport, UrllibTransport
 from swag_bot.models.keys import redact_secrets
@@ -45,10 +47,16 @@ class OllamaClient:
         base_url: str | None = None,
         timeout: float = 120.0,
         transport: HTTPTransport | None = None,
+        temperature: float = 0.2,
+        num_ctx: int | None = None,
+        num_predict: int | None = DEFAULT_NUM_PREDICT,
     ) -> None:
         self.model = model
         self.base_url = _normalize_base(base_url)
         self.timeout = timeout
+        self.temperature = temperature
+        self.num_ctx = num_ctx
+        self.num_predict = num_predict
         self._transport = transport if transport is not None else UrllibTransport()
 
     def chat(
@@ -222,14 +230,9 @@ class OllamaClient:
             stream=False,
             response_format=response_format,
             response_schema=response_schema,
+            options=self._options(),
         )
-        response = self._transport.request(
-            "POST",
-            f"{self.base_url}/api/chat",
-            _dump(payload),
-            _JSON_HEADERS,
-            self.timeout,
-        )
+        response = self._request(payload, retry=True)
         if response.status >= 400:
             detail = redact_secrets(response.text())
             if native_tools and _tools_unsupported(response.status, detail):
@@ -268,6 +271,7 @@ class OllamaClient:
             model=model,
             tools=tools if native_tools else None,
             stream=True,
+            options=self._options(),
         )
         try:
             lines = self._transport.stream(
@@ -302,6 +306,30 @@ class OllamaClient:
                 raise ToolCallingUnsupported(str(exc)) from exc
             raise
 
+    def _options(self) -> dict[str, Any]:
+        """Ollama generation options. Empty values are omitted."""
+        options: dict[str, Any] = {"temperature": self.temperature}
+        if self.num_predict is not None:
+            options["num_predict"] = self.num_predict
+        if self.num_ctx is not None:
+            options["num_ctx"] = self.num_ctx
+        return options
+
+    def _request(self, payload: dict[str, Any], *, retry: bool) -> Any:
+        """POST ``/api/chat``. A timeout is tried once more, then raised."""
+        try:
+            return self._transport.request(
+                "POST",
+                f"{self.base_url}/api/chat",
+                _dump(payload),
+                _JSON_HEADERS,
+                self.timeout,
+            )
+        except ModelError as exc:
+            if retry and _is_timeout(exc):
+                return self._request(_shorter_payload(payload), retry=False)
+            raise
+
 
 def resolve_ollama_base_url(api_base: str | None = None) -> str:
     """Ollama root URL. ``api_base`` wins, then ``OLLAMA_HOST``, then localhost."""
@@ -319,6 +347,28 @@ def _dump(payload: dict[str, Any]) -> bytes:
     return json.dumps(payload).encode("utf-8")
 
 
+def _shorter_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """The same chat with a lower ``num_predict`` and a concise nudge.
+
+    Repeating the identical body times out again on a slow CPU.
+    """
+    copied = copy.deepcopy(payload)
+    options = dict(copied.get("options") or {})
+    current = options.get("num_predict")
+    current_int = current if isinstance(current, int) else None
+    options["num_predict"] = retry_num_predict(current_int)
+    copied["options"] = options
+    messages = list(copied.get("messages") or [])
+    messages.append({"role": "user", "content": CONCISE_NUDGE})
+    copied["messages"] = messages
+    return copied
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return "timed out" in text or "timeout" in text
+
+
 def _chat_payload(
     messages: Sequence[Message],
     *,
@@ -327,12 +377,15 @@ def _chat_payload(
     stream: bool,
     response_format: Mapping[str, Any] | None = None,
     response_schema: Mapping[str, Any] | None = None,
+    options: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model,
         "messages": [_ollama_message(message) for message in messages],
         "stream": stream,
     }
+    if options:
+        payload["options"] = dict(options)
     if tools:
         payload["tools"] = tools_as_openai(tools)
     formatted = _ollama_format(response_format)

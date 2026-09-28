@@ -24,6 +24,11 @@ from swag_bot.interfaces import (
     ToolCall,
 )
 from swag_bot.models.errors import ModelError, ToolCallingUnsupported
+from swag_bot.models.generation import (
+    DEFAULT_NUM_PREDICT,
+    concise_messages,
+    retry_num_predict,
+)
 from swag_bot.models.keys import provider_api_key, redact_secrets
 from swag_bot.models.tools import (
     apply_text_tool_calls,
@@ -35,9 +40,7 @@ from swag_bot.models.tools import (
 
 CompletionFn = Callable[..., Any]
 
-_INSTALL_HINT = (
-    'LiteLLM is not installed. Install the optional extra: pip install -e ".[models]"'
-)
+_INSTALL_HINT = 'LiteLLM is not installed. Install the optional extra: pip install -e ".[models]"'
 
 _PREFIX = {
     "openai": "openai",
@@ -62,11 +65,17 @@ class LiteLLMClient:
         api_base: str | None = None,
         timeout: float = 120.0,
         completion_fn: CompletionFn | None = None,
+        temperature: float = 0.2,
+        num_ctx: int | None = None,
+        num_predict: int | None = DEFAULT_NUM_PREDICT,
     ) -> None:
         self.provider = provider.strip().lower()
         self.model = model
         self.api_base = api_base
         self.timeout = timeout
+        self.temperature = temperature
+        self.num_ctx = num_ctx
+        self.num_predict = num_predict
         self._completion_fn = completion_fn
 
     def __repr__(self) -> str:
@@ -225,14 +234,22 @@ class LiteLLMClient:
         response_format: Mapping[str, Any] | None = None,
         response_schema: Mapping[str, Any] | None = None,
         _allow_format_retry: bool = True,
+        _allow_timeout_retry: bool = True,
+        _predict: int | None = None,
     ) -> Any:
         fn = self._completion_fn or _load_litellm_completion()
+        predict = self.num_predict if _predict is None else _predict
         kwargs: dict[str, Any] = {
             "model": self.litellm_model(model),
             "messages": [_openai_message(message) for message in messages],
             "stream": stream,
             "timeout": self.timeout,
+            "temperature": self.temperature,
         }
+        if predict is not None:
+            kwargs["max_tokens"] = predict
+        if self.num_ctx is not None and _sends_num_ctx(self.provider, self.litellm_model(model)):
+            kwargs["num_ctx"] = self.num_ctx
         if tools:
             kwargs["tools"] = tools_as_openai(tools)
             kwargs["tool_choice"] = "auto"
@@ -262,11 +279,19 @@ class LiteLLMClient:
             raise
         except Exception as exc:
             message = redact_secrets(str(exc))
-            if (
-                response_format is not None
-                and _allow_format_retry
-                and _format_unsupported(message)
-            ):
+            if _allow_timeout_retry and not stream and _is_timeout_message(message):
+                return self._invoke(
+                    concise_messages(messages),
+                    tools,
+                    model,
+                    stream=stream,
+                    response_format=response_format,
+                    response_schema=response_schema,
+                    _allow_format_retry=_allow_format_retry,
+                    _allow_timeout_retry=False,
+                    _predict=retry_num_predict(self.num_predict),
+                )
+            if response_format is not None and _allow_format_retry and _format_unsupported(message):
                 return self._invoke(
                     messages,
                     tools,
@@ -399,6 +424,18 @@ def _field(value: Any, name: str) -> Any:
     if isinstance(value, dict):
         return value.get(name)
     return getattr(value, name, None)
+
+
+def _is_timeout_message(message: str) -> bool:
+    text = message.lower()
+    return "timed out" in text or "timeout" in text
+
+
+def _sends_num_ctx(provider: str, model: str) -> bool:
+    """``num_ctx`` is an Ollama option. Other providers reject it."""
+    if provider == "ollama":
+        return True
+    return model.startswith("ollama/")
 
 
 def _format_unsupported(message: str) -> bool:

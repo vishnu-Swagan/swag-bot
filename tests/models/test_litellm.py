@@ -273,3 +273,44 @@ def test_missing_litellm_package(monkeypatch: pytest.MonkeyPatch) -> None:
     client = LiteLLMClient(provider="openai", model="gpt-4o-mini")
     with pytest.raises(ModelError, match="not installed"):
         client.complete("hi")
+
+
+def test_openai_call_sends_temperature_and_not_num_ctx(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+    recorder = Recorder([_chat("ok")])
+    client = LiteLLMClient(
+        provider="openai",
+        model="gpt-4o-mini",
+        completion_fn=recorder,
+        temperature=0.2,
+        num_ctx=32768,
+        num_predict=4096,
+    )
+    assert client.complete("hi") == "ok"
+    call = recorder.calls[0]
+    assert call["temperature"] == 0.2
+    assert call["max_tokens"] == 4096
+    assert "num_ctx" not in call
+
+
+def test_ollama_route_sends_num_ctx_and_retries_a_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
+    recorder = Recorder(
+        [TimeoutError("request to http://127.0.0.1:11434/api/chat timed out"), _chat("ok")]
+    )
+    client = LiteLLMClient(
+        provider="ollama",
+        model="qwen2.5:7b",
+        completion_fn=recorder,
+        num_ctx=32768,
+        temperature=0.2,
+    )
+    assert client.complete("hi") == "ok"
+    assert len(recorder.calls) == 2
+    assert recorder.calls[0]["num_ctx"] == 32768
+    assert recorder.calls[0]["temperature"] == 0.2
+    assert recorder.calls[0]["max_tokens"] == 1024
+    assert recorder.calls[1]["max_tokens"] == 512
+    retry_messages = recorder.calls[1]["messages"]
+    assert isinstance(retry_messages, list)
+    assert retry_messages[-1]["content"].startswith("Be concise.")

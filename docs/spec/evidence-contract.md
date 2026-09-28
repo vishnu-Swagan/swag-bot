@@ -14,7 +14,7 @@ inventing a second log shape.
 
 ## What a run stores
 
-Each run writes `<output-dir>/run.jsonl`. One JSON object per line. `record`
+Each run writes `<output-dir>/.swag/run.jsonl`. One JSON object per line. `record`
 says which payload is set:
 
 | `record` | Payload | Meaning |
@@ -24,14 +24,14 @@ says which payload is set:
 | `action` | `action` | One `ActionLogEntry`, the same object appended to the action log. |
 | `check` | `check` | One `CheckResult`. |
 
-`action-log.jsonl` in the same directory is only the action rows, kept so
+`action-log.jsonl` in that `.swag` directory is only the action rows, kept so
 older readers still work. The home file `$SWAG_HOME/actions.jsonl` is an
 index of those same action rows (same `id`s) across runs. `swag safety log`
 reads the index. A row's `run_id` is the plan id; `evidence_id` points at
 the ledger row for that action when there is one.
 
 Large stdout, stderr, and file bodies are not inlined. They are UTF-8 files
-under `<output-dir>/evidence/<id>.stdout`, `.stderr`, and `.content`. The
+under `<output-dir>/.swag/evidence/<id>.stdout`, `.stderr`, and `.content`. The
 evidence object carries `stdout_sha256`, `stderr_sha256`, and
 `content_sha256` (hex SHA-256 of the stored bytes) plus `stdout_blob`,
 `stderr_blob`, and `content_blob` (paths relative to the run directory).
@@ -74,6 +74,7 @@ text. An explicit empty array means "no machine check".
 | `file_contains` | `contains` | `path`, `contains` | The file's UTF-8 text contains `contains`. |
 | `command` | `cmd` | `command` | Run `command` in the sandbox. Pass when the exit code equals `expected_exit` (default 0). Default timeout is 60 seconds; set `timeout` to override. |
 | `exit_code` | `exit` | `expected_exit` (default 0) | Do not re-run. Pass when the latest tool evidence for this attempt has that exit code. Fail with "never ran" when there is none. |
+| `stdout` | `output` | `stdout_last_line` and/or `stdout_line_count` | Do not re-run. Compare the latest command stdout on this attempt. Line count includes blank lines and ignores one trailing newline. A redirect that left stdout empty fails a last-line or line-count requirement. |
 | `json_schema` | `json` | `path` | The file parses as JSON. `json_schema` (JSON key `schema` is also accepted) may restrict `type`, `required`, and `properties`. This is a subset, not full JSON Schema. |
 
 Unknown kinds do not reject the plan. That check fails at run time with

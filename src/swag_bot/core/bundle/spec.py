@@ -28,4 +28,4 @@ ARTIFACT_FILES = frozenset(
         "run.jsonl",
     }
 )
-SKIP_TOP_DIRS = frozenset({".git", "__pycache__", "bundle", "evidence"})
+SKIP_TOP_DIRS = frozenset({".git", ".swag", "__pycache__", "bundle", "evidence"})

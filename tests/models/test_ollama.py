@@ -110,9 +110,7 @@ def test_native_tool_call_normalizes_string_arguments() -> None:
             "message": {
                 "role": "assistant",
                 "content": "",
-                "tool_calls": [
-                    {"function": {"name": "add", "arguments": '{"a": 1, "b": 2}'}}
-                ],
+                "tool_calls": [{"function": {"name": "add", "arguments": '{"a": 1, "b": 2}'}}],
             },
             "done": True,
             "done_reason": "stop",
@@ -296,3 +294,53 @@ def test_error_text_redacts_secret_values(monkeypatch: pytest.MonkeyPatch) -> No
         _client(transport).complete("hi")
     assert "sk-test-should-not-leak" not in str(caught.value)
     assert "$OPENAI_API_KEY" in str(caught.value)
+
+
+def test_chat_sends_context_temperature_and_predict_cap() -> None:
+    transport = ScriptedTransport()
+    transport.push(
+        200,
+        {"model": "qwen2.5:7b", "message": {"role": "assistant", "content": "ok"}, "done": True},
+    )
+    client = OllamaClient(
+        model="qwen2.5:7b",
+        base_url="http://ollama.test",
+        transport=transport,
+        temperature=0.2,
+        num_ctx=32768,
+        num_predict=4096,
+    )
+    assert client.complete("ping") == "ok"
+    body = transport.calls[0]["body"]
+    assert isinstance(body, dict)
+    assert body["options"] == {"temperature": 0.2, "num_predict": 4096, "num_ctx": 32768}
+
+
+def test_chat_retries_a_timeout_once() -> None:
+    transport = ScriptedTransport()
+    transport.push(
+        200,
+        {"model": "llama3.2", "message": {"role": "assistant", "content": "ok"}, "done": True},
+    )
+    original = transport.request
+    attempts = {"n": 0}
+
+    def request(method: str, url: str, body: bytes | None, headers: object, timeout: float):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            transport.calls.append(
+                {"method": method, "url": url, "body": _loads(body), "timeout": timeout}
+            )
+            raise ModelError("request to http://127.0.0.1:11434/api/chat timed out")
+        return original(method, url, body, headers, timeout)
+
+    transport.request = request  # type: ignore[method-assign]
+    assert _client(transport).complete("ping") == "ok"
+    assert attempts["n"] == 2
+    first = transport.calls[0]["body"]
+    second = transport.calls[1]["body"]
+    assert isinstance(first, dict) and isinstance(second, dict)
+    assert first["options"]["num_predict"] == 1024
+    assert second["options"]["num_predict"] == 512
+    assert second["messages"][-1]["content"].startswith("Be concise.")
+    assert first["messages"][-1]["content"] == "ping"

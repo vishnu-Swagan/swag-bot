@@ -214,7 +214,7 @@ def test_jury_does_not_touch_a_reversible_write(tmp_path: Path) -> None:
     loop.escalation = controller
     plan = loop.run("Write hello.txt containing hello")
     assert plan.steps[0].status is StepStatus.DONE
-    assert sandbox.read_file("hello.txt") == "hello"
+    assert sandbox.read_file("hello.txt") == "hello\n"
     assert judge.messages == []
     assert prompter.blocks == []
     assert prompter.questions == []
@@ -310,4 +310,4 @@ def test_run_without_escalate_does_not_ask(tmp_path: Path, monkeypatch: pytest.M
     text = visible(result)
     assert result.exit_code == 0, text
     assert "Clarification needed" not in text
-    assert (out / "hello.txt").read_text(encoding="utf-8") == "hello"
+    assert (out / "hello.txt").read_text(encoding="utf-8") == "hello\n"
