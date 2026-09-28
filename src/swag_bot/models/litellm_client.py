@@ -24,6 +24,11 @@ from swag_bot.interfaces import (
     ToolCall,
 )
 from swag_bot.models.errors import ModelError, ToolCallingUnsupported
+from swag_bot.models.generation import (
+    DEFAULT_NUM_PREDICT,
+    concise_messages,
+    retry_num_predict,
+)
 from swag_bot.models.keys import provider_api_key, redact_secrets
 from swag_bot.models.tools import (
     apply_text_tool_calls,
@@ -35,9 +40,7 @@ from swag_bot.models.tools import (
 
 CompletionFn = Callable[..., Any]
 
-_INSTALL_HINT = (
-    'LiteLLM is not installed. Install the optional extra: pip install -e ".[models]"'
-)
+_INSTALL_HINT = 'LiteLLM is not installed. Install the optional extra: pip install -e ".[models]"'
 
 _PREFIX = {
     "openai": "openai",
@@ -64,7 +67,7 @@ class LiteLLMClient:
         completion_fn: CompletionFn | None = None,
         temperature: float = 0.2,
         num_ctx: int | None = None,
-        num_predict: int | None = 4096,
+        num_predict: int | None = DEFAULT_NUM_PREDICT,
     ) -> None:
         self.provider = provider.strip().lower()
         self.model = model
@@ -232,8 +235,10 @@ class LiteLLMClient:
         response_schema: Mapping[str, Any] | None = None,
         _allow_format_retry: bool = True,
         _allow_timeout_retry: bool = True,
+        _predict: int | None = None,
     ) -> Any:
         fn = self._completion_fn or _load_litellm_completion()
+        predict = self.num_predict if _predict is None else _predict
         kwargs: dict[str, Any] = {
             "model": self.litellm_model(model),
             "messages": [_openai_message(message) for message in messages],
@@ -241,8 +246,8 @@ class LiteLLMClient:
             "timeout": self.timeout,
             "temperature": self.temperature,
         }
-        if self.num_predict is not None:
-            kwargs["max_tokens"] = self.num_predict
+        if predict is not None:
+            kwargs["max_tokens"] = predict
         if self.num_ctx is not None and _sends_num_ctx(self.provider, self.litellm_model(model)):
             kwargs["num_ctx"] = self.num_ctx
         if tools:
@@ -276,7 +281,7 @@ class LiteLLMClient:
             message = redact_secrets(str(exc))
             if _allow_timeout_retry and not stream and _is_timeout_message(message):
                 return self._invoke(
-                    messages,
+                    concise_messages(messages),
                     tools,
                     model,
                     stream=stream,
@@ -284,12 +289,9 @@ class LiteLLMClient:
                     response_schema=response_schema,
                     _allow_format_retry=_allow_format_retry,
                     _allow_timeout_retry=False,
+                    _predict=retry_num_predict(self.num_predict),
                 )
-            if (
-                response_format is not None
-                and _allow_format_retry
-                and _format_unsupported(message)
-            ):
+            if response_format is not None and _allow_format_retry and _format_unsupported(message):
                 return self._invoke(
                     messages,
                     tools,

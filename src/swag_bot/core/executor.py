@@ -9,6 +9,7 @@ from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from typing import Any
 
+from swag_bot.core.approvals import remember_approved_command
 from swag_bot.core.escalation import EscalationController
 from swag_bot.core.evidence import EvidenceLedger
 from swag_bot.core.memory_journal import label_memory
@@ -314,6 +315,10 @@ class StepExecutor:
             )
             self._emit_tool(_emit_denial(action))
             return _denied_text(action)
+        if call.name == "run_shell":
+            command = arguments.get("command")
+            if isinstance(command, str):
+                remember_approved_command(command)
 
         started = time.perf_counter()
         try:

@@ -74,7 +74,7 @@ text. An explicit empty array means "no machine check".
 | `file_contains` | `contains` | `path`, `contains` | The file's UTF-8 text contains `contains`. |
 | `command` | `cmd` | `command` | Run `command` in the sandbox. Pass when the exit code equals `expected_exit` (default 0). Default timeout is 60 seconds; set `timeout` to override. |
 | `exit_code` | `exit` | `expected_exit` (default 0) | Do not re-run. Pass when the latest tool evidence for this attempt has that exit code. Fail with "never ran" when there is none. |
-| `stdout` | `output` | `stdout_last_line` and/or `stdout_line_count` | Do not re-run. Compare the latest command stdout on this attempt. A redirect that left stdout empty fails a last-line or line-count requirement. |
+| `stdout` | `output` | `stdout_last_line` and/or `stdout_line_count` | Do not re-run. Compare the latest command stdout on this attempt. Line count includes blank lines and ignores one trailing newline. A redirect that left stdout empty fails a last-line or line-count requirement. |
 | `json_schema` | `json` | `path` | The file parses as JSON. `json_schema` (JSON key `schema` is also accepted) may restrict `type`, `required`, and `properties`. This is a subset, not full JSON Schema. |
 
 Unknown kinds do not reject the plan. That check fails at run time with

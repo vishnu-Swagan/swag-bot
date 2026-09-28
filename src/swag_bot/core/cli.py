@@ -38,7 +38,7 @@ from swag_bot.core.reversibility import (
     StubReversibilityClassifier,
     adapt_classifier,
 )
-from swag_bot.core.summary import render_for_terminal
+from swag_bot.core.summary import aborted_summary, render_for_terminal
 from swag_bot.core.tools import python_interpreter_note, register_builtin_tools
 from swag_bot.errors import ConfigError, NotImplementedYet, SwagError
 from swag_bot.harness.session import prepare_harness
@@ -56,6 +56,7 @@ from swag_bot.interfaces import (
     SkillMeta,
     StepStatus,
     TaintTracker,
+    TaskPlan,
     ToolRegistry,
     TrustLevel,
 )
@@ -496,6 +497,14 @@ def execute_goal(
             engine_note=loop.engine_note,
             bundle_dir=written,
         )
+    except Exception as exc:
+        if plan is None:
+            plan = loop._plan or TaskPlan(goal=goal, steps=[])
+        if not loop.summary_text.strip():
+            loop.summary_text = aborted_summary(goal, str(exc), plan)
+        if not bundle_summary:
+            bundle_summary = loop.summary_text
+        raise
     finally:
         if plan is not None:
             write_run_artifacts(

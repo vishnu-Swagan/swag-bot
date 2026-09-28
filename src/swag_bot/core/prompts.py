@@ -62,11 +62,11 @@ When passed is true, replan must be false.
 """
 
 SUMMARIZER_SYSTEM = f"""{SUMMARIZER_PREFIX}
-Write a short markdown summary of a finished task for the person who asked.
-Lead with whether the goal was met. Mention failed or skipped steps and why.
+Write one or two plain sentences about what happened.
+Do not say whether the goal was met. The record already says that.
+Do not list checks, steps, evidence ids, or a Goal, Steps, or Result section.
+Do not use markdown, bold, backticks, or a code fence.
 Do not invent results that are not in the step record.
-Do not start with a heading named Summary. Do not repeat the step list.
-Do not wrap the answer in a code fence.
 """
 
 # Shorter prompts for a tiny scaffold. They describe the shape in words and

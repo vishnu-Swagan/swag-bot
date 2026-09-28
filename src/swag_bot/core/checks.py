@@ -15,6 +15,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from swag_bot.core.approvals import command_already_approved
 from swag_bot.core.evidence import EvidenceLedger, current_attempt
 from swag_bot.core.executor import _initial_risk, _policy_decision
 from swag_bot.core.parsing import PlanParseError
@@ -412,11 +413,12 @@ class CheckRunner:
                 detail=f"{check.id}: command never ran",
                 summary=describe_check(check),
             )
-        lines = [line for line in chosen.stdout.splitlines() if line.strip()]
+        lines = chosen.stdout.splitlines()
+        content = [line for line in lines if line.strip()]
         problems: list[str] = []
         if check.stdout_last_line is not None:
             expected = check.stdout_last_line.strip()
-            actual = lines[-1].strip() if lines else ""
+            actual = content[-1].strip() if content else ""
             if actual != expected:
                 problems.append(f"last line is {actual!r}, expected {expected!r}")
         if check.stdout_line_count is not None:
@@ -586,6 +588,9 @@ class CheckRunner:
         if decision == "deny":
             return False, "policy", action
         if decision == "prompt":
+            command = str(action.arguments.get("command") or action.target or "")
+            if action.kind == ActionKind.RUN_COMMAND.value and command_already_approved(command):
+                return True, "user", action
             approved = bool(self.prompter.prompt(action)) if self.prompter is not None else False
             return approved, "user", action
         if policy.autonomy is AutonomyLevel.AUTO:

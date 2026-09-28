@@ -144,10 +144,12 @@ class ModelSettings(BaseModel):
 
     ``timeout`` is the HTTP timeout in seconds. Omitted means the client
     default (120). The small-model harness raises that for local models when
-    ``harness`` is not ``off``, and retries a timed-out request once.
-    ``temperature``, ``num_ctx``, and ``num_predict`` are sent with each
-    Ollama request (``num_ctx`` is filled from the harness probe when unset).
-    ``harness`` is ``auto``, ``off``, ``tiny``, ``standard``, or ``frontier``.
+    ``harness`` is not ``off``, scaling it with ``num_predict``, and retries
+    a timed-out request once with a shorter cap. ``temperature``, ``num_ctx``,
+    and ``num_predict`` are sent with each Ollama request (``num_ctx`` is
+    filled from the harness probe when unset). Local ``num_predict`` defaults
+    to 1024 and is capped there unless ``timeout`` is set. ``harness`` is
+    ``auto``, ``off``, ``tiny``, ``standard``, or ``frontier``.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -158,7 +160,7 @@ class ModelSettings(BaseModel):
     timeout: float | None = None
     temperature: float = 0.2
     num_ctx: int | None = None
-    num_predict: int = 4096
+    num_predict: int = 1024
     harness: str = "auto"
     fallback: FallbackModelSettings = Field(default_factory=FallbackModelSettings)
     budget: ModelBudgetSettings = Field(default_factory=ModelBudgetSettings)

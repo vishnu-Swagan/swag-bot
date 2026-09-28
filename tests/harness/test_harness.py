@@ -100,6 +100,8 @@ def test_size_timeout_and_scaffold_choice() -> None:
     assert parameter_billions("llama3.2") == 3
     assert request_timeout_seconds("ollama", "qwen2.5:3b", None) == 120
     assert request_timeout_seconds("ollama", "qwen2.5:7b", None) == 180
+    assert request_timeout_seconds("ollama", "qwen2.5:7b", None, num_predict=1024) == 180
+    assert request_timeout_seconds("ollama", "qwen2.5:7b", None, num_predict=4096) == 439.6
     assert request_timeout_seconds("ollama", "qwen2.5:7b", 90) == 90
     assert request_timeout_seconds("openai", "gpt-4o-mini", None) is None
     assert estimate_cost_usd("ollama") == 0

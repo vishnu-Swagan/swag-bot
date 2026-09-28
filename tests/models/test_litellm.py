@@ -309,3 +309,8 @@ def test_ollama_route_sends_num_ctx_and_retries_a_timeout(monkeypatch: pytest.Mo
     assert len(recorder.calls) == 2
     assert recorder.calls[0]["num_ctx"] == 32768
     assert recorder.calls[0]["temperature"] == 0.2
+    assert recorder.calls[0]["max_tokens"] == 1024
+    assert recorder.calls[1]["max_tokens"] == 512
+    retry_messages = recorder.calls[1]["messages"]
+    assert isinstance(retry_messages, list)
+    assert retry_messages[-1]["content"].startswith("Be concise.")

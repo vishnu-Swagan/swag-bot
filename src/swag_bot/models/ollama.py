@@ -7,6 +7,7 @@ comes from ``settings.model.api_base`` when that is set, otherwise from
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from collections.abc import Iterator, Mapping, Sequence
@@ -20,6 +21,7 @@ from swag_bot.interfaces import (
     Tool,
 )
 from swag_bot.models.errors import ModelError, ToolCallingUnsupported
+from swag_bot.models.generation import CONCISE_NUDGE, DEFAULT_NUM_PREDICT, retry_num_predict
 from swag_bot.models.hints import explain_ollama_http
 from swag_bot.models.http import HTTPTransport, UrllibTransport
 from swag_bot.models.keys import redact_secrets
@@ -47,7 +49,7 @@ class OllamaClient:
         transport: HTTPTransport | None = None,
         temperature: float = 0.2,
         num_ctx: int | None = None,
-        num_predict: int | None = 4096,
+        num_predict: int | None = DEFAULT_NUM_PREDICT,
     ) -> None:
         self.model = model
         self.base_url = _normalize_base(base_url)
@@ -325,7 +327,7 @@ class OllamaClient:
             )
         except ModelError as exc:
             if retry and _is_timeout(exc):
-                return self._request(payload, retry=False)
+                return self._request(_shorter_payload(payload), retry=False)
             raise
 
 
@@ -343,6 +345,23 @@ def _normalize_base(base_url: str | None) -> str:
 
 def _dump(payload: dict[str, Any]) -> bytes:
     return json.dumps(payload).encode("utf-8")
+
+
+def _shorter_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """The same chat with a lower ``num_predict`` and a concise nudge.
+
+    Repeating the identical body times out again on a slow CPU.
+    """
+    copied = copy.deepcopy(payload)
+    options = dict(copied.get("options") or {})
+    current = options.get("num_predict")
+    current_int = current if isinstance(current, int) else None
+    options["num_predict"] = retry_num_predict(current_int)
+    copied["options"] = options
+    messages = list(copied.get("messages") or [])
+    messages.append({"role": "user", "content": CONCISE_NUDGE})
+    copied["messages"] = messages
+    return copied
 
 
 def _is_timeout(exc: BaseException) -> bool:

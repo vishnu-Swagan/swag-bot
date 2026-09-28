@@ -35,6 +35,18 @@ _LAST_LINE_VALUE = re.compile(
     r"\blast\s+line\b.{0,40}?\b(?:is|was)\s+[\"']?([A-Za-z0-9_+-]+)",
     re.IGNORECASE,
 )
+_ECHO_SPLIT = re.compile(
+    r"(?:^|\n)\s*(?:#{1,6}\s*)?(?:goal|steps|result)\s*:|"
+    r"\s+-\s+\*{0,2}(?:met|unverified|not met)\*{0,2}\s*:|"
+    r"\s+goal\s*:|\s+steps\s*:|\s+result\s*:",
+    re.IGNORECASE,
+)
+_GOAL_HEAD = re.compile(r"^(?:goal met|goal not met)\.?\s*", re.IGNORECASE)
+_ONLY_HEADLINE = re.compile(r"^(?:goal met|goal not met)\.?$", re.IGNORECASE)
+_RECORD_LINE = re.compile(
+    r"^(?:goal|steps|result)\b|^\d+ done,|^[-*]\s+(?:met|unverified|not met)\b",
+    re.IGNORECASE,
+)
 
 
 def summarize(
@@ -79,7 +91,7 @@ def summarize(
 
 
 def clean_model_summary(text: str) -> str:
-    """Drop a wrapping code fence, a leading ``# Summary``, and an echoed step record."""
+    """Keep at most two plain sentences. Drop an echoed check list or step record."""
     raw = text.strip()
     if not raw:
         return ""
@@ -87,9 +99,61 @@ def clean_model_summary(text: str) -> str:
     if fenced:
         raw = fenced.group(1).strip()
     raw = _SUMMARY_HEADING.sub("", raw, count=1).strip()
+    raw = plain_terminal(raw)
+    raw = _ECHO_SPLIT.split(raw, maxsplit=1)[0].strip()
+    kept_lines: list[str] = []
+    for line in raw.splitlines():
+        folded = line.strip()
+        if not folded:
+            continue
+        if _RECORD_LINE.match(folded):
+            break
+        kept_lines.append(folded)
+    raw = " ".join(kept_lines).strip()
+    raw = _GOAL_HEAD.sub("", raw).strip()
     if _looks_like_record(raw):
         return ""
-    return raw
+    sentences = [item.strip() for item in _SENTENCE.split(raw) if item.strip()]
+    short: list[str] = []
+    for sentence in sentences:
+        if _ONLY_HEADLINE.match(sentence):
+            continue
+        short.append(sentence)
+        if len(short) == 2:
+            break
+    return " ".join(short).strip()
+
+
+def plain_terminal(text: str) -> str:
+    """Drop fences, bold markers, and backticks. Leave bracketed step ids alone."""
+    cleaned = _FENCE_LINE.sub("", text)
+    cleaned = _BOLD.sub(r"\1", cleaned)
+    cleaned = _CODE.sub(r"\1", cleaned)
+    return cleaned
+
+
+def aborted_summary(goal: str, error: str, plan: TaskPlan | None = None) -> str:
+    """Honest summary when a run stops before the model can finish one."""
+    lines = [
+        "# Summary",
+        "",
+        "Goal not met.",
+        "",
+        "The run stopped before it finished.",
+        "",
+        error.strip() or "The model request failed.",
+        "",
+        f"Goal: {goal}",
+        "",
+    ]
+    if plan is not None and plan.steps:
+        lines.append("## Steps")
+        lines.append("")
+        for step in plan.steps:
+            lines.append(f"- {step.id} {step.status.value}: {step.title}")
+        lines.append("")
+    lines.extend(["## Result", "", "The run did not finish. This is not a success."])
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _looks_like_record(text: str) -> bool:
@@ -99,9 +163,7 @@ def _looks_like_record(text: str) -> bool:
 
 def render_for_terminal(summary: str) -> str:
     """Plain text for the terminal. No raw bold markers, fences, or heading marks."""
-    text = _FENCE_LINE.sub("", summary)
-    text = _BOLD.sub(r"\1", text)
-    text = _CODE.sub(r"\1", text)
+    text = plain_terminal(summary)
     text = _HEADING.sub("", text)
     cleaned: list[str] = []
     blank = 0
@@ -163,7 +225,12 @@ def render_record(
         lines.extend([headline, ""])
     if goal_results:
         for item in goal_results:
-            state = "met" if item.passed and item.evidence_ids else "unverified"
+            if item.passed and item.evidence_ids:
+                state = "met"
+            elif item.evidence_ids:
+                state = "not met"
+            else:
+                state = "unverified"
             cited = ", ".join(item.evidence_ids) if item.evidence_ids else "none"
             lines.append(f"- {state}: {item.detail} (evidence: {cited})")
         lines.append("")
@@ -211,9 +278,7 @@ def _goal_headline(plan: TaskPlan, goal_results: Sequence[CheckResult]) -> str:
         if unmet:
             return "Goal not met."
         return "Goal met."
-    failed = any(
-        step.status in {StepStatus.FAILED, StepStatus.UNVERIFIED} for step in plan.steps
-    )
+    failed = any(step.status in {StepStatus.FAILED, StepStatus.UNVERIFIED} for step in plan.steps)
     if failed:
         return "Goal not met."
     return ""
@@ -250,16 +315,23 @@ def _last_line_backed(
     evidence: Sequence[Evidence],
     goal_results: Sequence[CheckResult],
 ) -> bool:
-    for item in goal_results:
-        ident = f"{item.check_id} {item.detail}".casefold().replace("-", " ")
-        if "last line" not in ident:
-            continue
-        return bool(item.passed and item.evidence_ids)
+    """True when the sentence agrees with captured output.
+
+    A true report of the last line stays, even when a goal check wanted a
+    different line. A claim is unverified only when it contradicts the
+    output or no output was captured.
+    """
     observed = _observed_last_lines(evidence)
     claimed = _LAST_LINE_VALUE.search(sentence)
-    if claimed is None:
-        return bool(observed)
-    return claimed.group(1) in observed
+    if claimed is not None:
+        return claimed.group(1) in observed
+    if observed:
+        return True
+    for item in goal_results:
+        ident = f"{item.check_id} {item.detail}".casefold().replace("-", " ")
+        if "last line" in ident and item.passed and item.evidence_ids:
+            return True
+    return False
 
 
 def _observed_last_lines(evidence: Sequence[Evidence]) -> set[str]:

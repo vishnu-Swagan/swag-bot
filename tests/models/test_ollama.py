@@ -110,9 +110,7 @@ def test_native_tool_call_normalizes_string_arguments() -> None:
             "message": {
                 "role": "assistant",
                 "content": "",
-                "tool_calls": [
-                    {"function": {"name": "add", "arguments": '{"a": 1, "b": 2}'}}
-                ],
+                "tool_calls": [{"function": {"name": "add", "arguments": '{"a": 1, "b": 2}'}}],
             },
             "done": True,
             "done_reason": "stop",
@@ -330,10 +328,19 @@ def test_chat_retries_a_timeout_once() -> None:
     def request(method: str, url: str, body: bytes | None, headers: object, timeout: float):
         attempts["n"] += 1
         if attempts["n"] == 1:
-            transport.calls.append({"method": method, "url": url, "timeout": timeout})
+            transport.calls.append(
+                {"method": method, "url": url, "body": _loads(body), "timeout": timeout}
+            )
             raise ModelError("request to http://127.0.0.1:11434/api/chat timed out")
         return original(method, url, body, headers, timeout)
 
     transport.request = request  # type: ignore[method-assign]
     assert _client(transport).complete("ping") == "ok"
     assert attempts["n"] == 2
+    first = transport.calls[0]["body"]
+    second = transport.calls[1]["body"]
+    assert isinstance(first, dict) and isinstance(second, dict)
+    assert first["options"]["num_predict"] == 1024
+    assert second["options"]["num_predict"] == 512
+    assert second["messages"][-1]["content"].startswith("Be concise.")
+    assert first["messages"][-1]["content"] == "ping"

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from swag_bot.core.approvals import approval_scope
 from swag_bot.core.bundle.context import current_attempt as bundle_attempt
 from swag_bot.core.bundle.context import current_step_id
 from swag_bot.core.checks import CheckRunner
@@ -237,6 +238,18 @@ class PlanDoVerifyLoop:
         ``context`` is extra planner text from the composition root: recalled
         memories and the instructions of skills selected for this goal.
         """
+        with approval_scope():
+            return self._run(goal, dry_run=dry_run, context=context, run_id=run_id)
+
+    def _run(
+        self,
+        goal: str,
+        *,
+        dry_run: bool = False,
+        context: str = "",
+        run_id: str | None = None,
+    ) -> TaskPlan:
+        """Plan, do, and verify. The caller holds the approval-memory scope."""
         with self._log_lock:
             self.action_log.clear()
         with self._state_lock:

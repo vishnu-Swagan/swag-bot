@@ -78,12 +78,10 @@ def provenance_metadata(
 
 
 def memory_tokens(text: str) -> set[str]:
-    """Distinctive words. Stopwords and one-letter tokens are dropped."""
+    """Distinctive words. Stopwords, pure numbers, and short tokens are dropped."""
     found: set[str] = set()
     for token in _TOKEN.findall(text.casefold()):
-        if token in _STOP:
-            continue
-        if len(token) < 3 and not token.isdigit():
+        if token in _STOP or token.isdigit() or len(token) < 3:
             continue
         found.add(token)
     return found
@@ -92,19 +90,24 @@ def memory_tokens(text: str) -> set[str]:
 def memory_relevance(goal: str, item: MemoryItem, *, workspace: str = "") -> float:
     """Overlap of the goal's distinctive words with the memory and its goal.
 
-    The score is the share of the goal's tokens that also appear in the
-    memory. ``workspace`` raises the bar when the memory was saved somewhere
-    else, and lowers it slightly for the same workspace.
+    The score is the share of the goal's meaningful tokens that also appear
+    in the memory. Pure numbers do not count. A memory from a different
+    workspace scores 0 unless that overlap is already strong.
     """
-    del workspace
     goal_tokens = memory_tokens(goal)
     if not goal_tokens:
         return 0.0
     remembered = memory_tokens(item.content)
     remembered.update(memory_tokens(str(item.metadata.get("goal") or "")))
-    if not remembered:
+    overlap = goal_tokens & remembered
+    if not overlap:
         return 0.0
-    return len(goal_tokens & remembered) / len(goal_tokens)
+    score = len(overlap) / len(goal_tokens)
+    stored = str(item.metadata.get("workspace") or "").strip()
+    current = workspace.strip()
+    if stored and current and not _same_workspace(stored, current) and score < 0.5:
+        return 0.0
+    return score
 
 
 def relevant_memories(
@@ -125,7 +128,7 @@ def relevant_memories(
         return []
     ranked: list[tuple[float, int, MemoryItem]] = []
     for index, item in enumerate(items):
-        score = memory_relevance(goal, item)
+        score = memory_relevance(goal, item, workspace=workspace)
         needed = _relevance_threshold(item, workspace, threshold)
         if score >= needed:
             ranked.append((score, index, item))

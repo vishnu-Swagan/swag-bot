@@ -963,9 +963,9 @@ class Check(BaseModel):
     ``schema`` in JSON is accepted as an alias of ``json_schema``.
 
     ``stdout`` checks compare captured command output. ``stdout_last_line`` is
-    the exact last non-empty line. ``stdout_line_count`` is how many
-    non-empty lines the output must have. Both default to unset so older
-    checks still load.
+    the exact last non-empty line. ``stdout_line_count`` counts every line,
+    including blanks. A single trailing newline does not add a line. Both
+    default to unset so older checks still load.
     """
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from swag_bot.config import Settings, load_settings
 from swag_bot.errors import ConfigError
+from swag_bot.harness.sizing import local_num_predict
 from swag_bot.interfaces import LLMClient
 from swag_bot.models.litellm_client import LiteLLMClient
 from swag_bot.models.ollama import OllamaClient
@@ -33,7 +34,7 @@ def get_llm_client(config: Settings | None = None, *, timeout: float | None = No
     chosen = timeout if timeout is not None else settings.model.timeout
     temperature = settings.model.temperature
     num_ctx = settings.model.num_ctx
-    num_predict = settings.model.num_predict
+    num_predict = local_num_predict(provider, settings.model.num_predict, chosen)
     if provider == OLLAMA:
         if chosen is None:
             return OllamaClient(

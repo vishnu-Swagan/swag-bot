@@ -22,6 +22,7 @@ from rich.table import Table
 from rich.text import Text
 
 from swag_bot.core.loop import LoopEvent
+from swag_bot.core.summary import plain_terminal
 from swag_bot.interfaces import ApprovalPrompter, StepStatus, TaskPlan
 
 _LABELS = {
@@ -98,7 +99,7 @@ class TaskListView:
             suspend = self._live is not None and self._depth == 0
         if suspend:
             self._stop()
-        self.console.print(text, highlight=False, markup=False)
+        self.console.print(plain_terminal(text), highlight=False, markup=False)
         if suspend:
             self._start()
             self._refresh()
@@ -171,10 +172,11 @@ class TaskListView:
 
     @staticmethod
     def _print(live: Any, console: Console, text: str) -> None:
+        shown = plain_terminal(text)
         if live is not None:
-            live.console.print(text, highlight=False, markup=False)
+            live.console.print(shown, highlight=False, markup=False)
             return
-        console.print(text, highlight=False, markup=False)
+        console.print(shown, highlight=False, markup=False)
 
 
 class RunProgress:
