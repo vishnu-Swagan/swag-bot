@@ -46,6 +46,7 @@ from swag_bot.interfaces import (
     ActionLogEntry,
     ApprovalPrompter,
     AutonomyLevel,
+    CheckResult,
     LLMClient,
     MCPServerSpec,
     MemoryItem,
@@ -93,6 +94,7 @@ class GoalResult:
     exit_code: int
     engine_note: str
     bundle_dir: Path | None = None
+    goal_checks: tuple[CheckResult, ...] = ()
 
 
 @app.command("run")
@@ -496,6 +498,7 @@ def execute_goal(
             exit_code=exit_code,
             engine_note=loop.engine_note,
             bundle_dir=written,
+            goal_checks=tuple(loop.goal_results),
         )
     except Exception as exc:
         if plan is None:
@@ -504,6 +507,7 @@ def execute_goal(
             loop.summary_text = aborted_summary(goal, str(exc), plan)
         if not bundle_summary:
             bundle_summary = loop.summary_text
+        _remember_failure(exc, destination, loop.summary_text, tuple(loop.goal_results))
         raise
     finally:
         if plan is not None:
@@ -559,17 +563,58 @@ def _text_flag(loop: object, name: str) -> str | None:
 
 
 def mcp_task_runner(goal: str) -> str:
-    """Run a goal for ``swag serve-mcp`` and return the summary text.
+    """Run a goal for ``swag serve-mcp`` and return structured JSON.
 
     The prompter is the one bound for this MCP request. It never reads stdin
     or writes stdout, because those streams are the stdio protocol channel.
+
+    A declined approval stops before the model is called. A missing config
+    runs the same quiet first-run setup as ``swag run``. If that still leaves
+    no usable model, the JSON says so and names ``swag setup --auto``.
     """
+    from swag_bot.core.mcp_result import (
+        declined_result,
+        failure_result,
+        not_ready_result,
+        result_json,
+        result_payload,
+    )
     from swag_bot.onboarding.approvals import current_mcp_prompter
 
+    prompter = current_mcp_prompter()
+    if prompter.reason == "declined":
+        return result_json(declined_result(goal))
+
+    from swag_bot.onboarding.setup import first_run_if_needed
+    from swag_bot.onboarding.status import doctor_report
+
     try:
-        return execute_goal(goal, prompter=current_mcp_prompter()).summary
-    except SwagError as exc:
-        return str(exc)
+        first_run_if_needed()
+    except (OSError, SwagError) as exc:
+        return result_json(
+            not_ready_result(goal, f"Setup failed: {exc}. Run `swag setup --auto`.")
+        )
+    report = doctor_report()
+    if not report.get("ready"):
+        reason = str(report.get("reason") or "Swag Bot is not ready.")
+        return result_json(not_ready_result(goal, reason))
+    try:
+        result = execute_goal(goal, prompter=prompter)
+    except Exception as exc:
+        return result_json(failure_result(goal, exc))
+    return result_json(result_payload(goal, result))
+
+
+def _remember_failure(
+    exc: BaseException,
+    output_dir: Path,
+    summary: str,
+    checks: tuple[CheckResult, ...],
+) -> None:
+    """Stash the output path on ``exc`` so the MCP result can cite it."""
+    exc.swag_output_dir = output_dir  # type: ignore[attr-defined]
+    exc.swag_summary = summary  # type: ignore[attr-defined]
+    exc.swag_goal_checks = checks  # type: ignore[attr-defined]
 
 
 def mcp_skill_provider() -> list[SkillMeta]:

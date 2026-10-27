@@ -309,10 +309,11 @@ swag serve-mcp
 swag serve-mcp --http --port 8765
 ```
 
-The server offers `swag_run_task` (run a goal, return the summary),
-`swag_start_task` / `swag_task_status` / `swag_task_result` (the same run,
-polled), `swag_list_skills`, and `swag_setup_status`. Install the MCP extra
-first.
+The server offers `swag_run_task` (run a goal and return JSON: status, goal
+checks, output folder, files, and summary), `swag_start_task` /
+`swag_task_status` / `swag_task_result` (the same run, polled; prefer this
+when the task may take more than a minute), `swag_list_skills`, and
+`swag_setup_status`. Install the MCP extra first.
 
 Write and shell actions are not confirmed on the terminal. Stdio is the MCP
 channel, so a prompt there would break the session. A client that supports

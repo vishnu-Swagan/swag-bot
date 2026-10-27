@@ -137,11 +137,14 @@ def setup_command(
 def install_mcp_command(
     client: Annotated[
         str,
-        typer.Option("--client", help="claude, cursor, vscode, gemini, desktop, chatgpt, or all."),
+        typer.Option(
+            "--client",
+            help="claude, cursor, vscode, gemini, codex, desktop, chatgpt, or all.",
+        ),
     ] = "all",
 ) -> None:
     """Print the install command or link for an MCP client."""
-    names = ["claude", "cursor", "vscode", "gemini", "desktop", "chatgpt"]
+    names = ["claude", "cursor", "vscode", "gemini", "codex", "desktop", "chatgpt"]
     chosen = names if client.strip().lower() == "all" else [client]
     blocks: list[str] = []
     try:

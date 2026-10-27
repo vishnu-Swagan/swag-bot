@@ -102,6 +102,11 @@ def derive_goal_checks(goal: str) -> list[Check]:
     return checks
 
 
+def filenames_in_goal(goal: str) -> list[str]:
+    """File names the goal text names, in order, without duplicates."""
+    return _files(goal)
+
+
 def _files(goal: str) -> list[str]:
     found: list[str] = []
     for match in _FILENAME.finditer(goal):

@@ -54,6 +54,23 @@ def claude_mcp_add_command() -> str:
     return " ".join(shlex.quote(part) for part in parts)
 
 
+def uvx_setup_auto_command() -> str:
+    """``uvx`` command that runs ``swag setup --auto`` with the MCP extra."""
+    from swag_bot.onboarding.distribution import requirement
+
+    parts = ["uvx", "--from", requirement("mcp"), CONSOLE_SCRIPT, "setup", "--auto"]
+    return " ".join(shlex.quote(part) for part in parts)
+
+
+def codex_mcp_add_command() -> str:
+    """Register the stdio server with the Codex CLI.
+
+    Shape: ``codex mcp add <name> -- <command>``.
+    """
+    parts = ["codex", "mcp", "add", MCP_SERVER_NAME, "--", "uvx", *uvx_serve_args()]
+    return " ".join(shlex.quote(part) for part in parts)
+
+
 def claude_marketplace_commands() -> tuple[str, str]:
     """Register this repo as a marketplace, then install the plugin."""
     add = f"claude plugin marketplace add {GITHUB_REPO}"
@@ -217,6 +234,14 @@ def render_client(name: str) -> str:
         )
     if key in {"gemini", "gemini-cli"}:
         return "\n".join(["Gemini CLI", gemini_install_command()])
+    if key == "codex":
+        return "\n".join(
+            [
+                "Codex",
+                codex_mcp_add_command(),
+                "Quit Codex and start it again so the swag tools load.",
+            ]
+        )
     if key in {"desktop", "claude-desktop"}:
         return "\n".join(
             [
@@ -237,7 +262,7 @@ def render_client(name: str) -> str:
                 f"{CONSOLE_SCRIPT} serve-mcp --http",
             ]
         )
-    known = "claude, cursor, vscode, gemini, desktop, chatgpt"
+    known = "claude, cursor, vscode, gemini, codex, desktop, chatgpt"
     raise ValueError(f"unknown MCP client {name!r}. Known clients: {known}")
 
 

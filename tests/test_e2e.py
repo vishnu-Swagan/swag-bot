@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from swag_bot.cli import app
-from swag_bot.config import Settings, save_settings
+from swag_bot.config import ModelSettings, Settings, save_settings
 from swag_bot.memory import get_memory_store
 from tests.cli_output import visible as _visible
 from tests.core.support import plan_json, verdict
@@ -242,7 +242,13 @@ def test_serve_mcp_wires_runner_and_skills(
         skill_description="Draft a reply for a github issue.",
         skill_body="SKILL BODY: check the issue checklist before posting.\n",
     )
-    save_settings(Settings(plugin_dirs=[str(plugin)]))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    save_settings(
+        Settings(
+            plugin_dirs=[str(plugin)],
+            model=ModelSettings(provider="openai", model="gpt-4o-mini"),
+        )
+    )
     captured: dict[str, object] = {}
 
     class _Server:
@@ -286,5 +292,8 @@ def test_serve_mcp_wires_runner_and_skills(
     monkeypatch.setattr("swag_bot.core.cli.build_llm_client", lambda settings: llm)
     task = kwargs["runner"]
     assert callable(task)
-    assert summary in task("github issue")
+    payload = json.loads(task("github issue"))
+    assert payload["status"] in {"met", "not_met", "aborted"}
+    assert summary in payload["summary"]
+    assert Path(payload["output_dir"]).is_dir()
     assert (tmp_path / "swag-output").is_dir()

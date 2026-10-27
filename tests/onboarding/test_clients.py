@@ -7,15 +7,20 @@ import json
 from pathlib import Path
 from urllib.parse import unquote
 
+from swag_bot import __version__
 from swag_bot.onboarding.clients import (
+    claude_marketplace_commands,
     claude_mcp_add_command,
     claude_plugin_mcp_json,
+    codex_mcp_add_command,
     cursor_install_link,
     desktop_pyproject,
     gemini_extension_manifest,
+    gemini_install_command,
     marketplace_manifest,
     mcpb_manifest,
     stdio_server_config,
+    uvx_setup_auto_command,
     vscode_install_link,
 )
 from swag_bot.plugins.loader import load_plugin
@@ -52,6 +57,49 @@ def test_claude_command_and_links_decode_to_the_stdio_server() -> None:
     assert vscode["name"] == "swag"
     assert vscode["command"] == config["command"]
     assert vscode["args"] == config["args"]
+
+
+def test_plugin_and_manifests_match_the_package_version() -> None:
+    plugin = json.loads(
+        (ROOT / "plugins" / "swag-bot" / ".claude-plugin" / "plugin.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert plugin["version"] == __version__
+    loaded = load_plugin(ROOT / "plugins" / "swag-bot")
+    for skill in loaded.list_skills():
+        assert skill.metadata.get("version") == __version__
+    gemini = json.loads((ROOT / "gemini-extension.json").read_text(encoding="utf-8"))
+    assert gemini["version"] == __version__
+    manifest_path = ROOT / "packaging" / "mcpb" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["version"] == __version__
+
+
+def test_install_prompts_use_generated_commands_and_name_the_reload() -> None:
+    text = (ROOT / "docs" / "INSTALL_FOR_AGENTS.md").read_text(encoding="utf-8")
+    short, reference = text.split("## Reference prompt", 1)
+    assert "THE TASK" not in short
+    assert "THE TASK" in reference
+    assert uvx_setup_auto_command() in short
+    assert claude_mcp_add_command() in text
+    marketplace, install = claude_marketplace_commands()
+    assert marketplace in short
+    assert install in short
+    assert "/reload-plugins --force" in short
+    assert cursor_install_link() in short
+    assert vscode_install_link() in short
+    assert gemini_install_command() in short
+    assert codex_mcp_add_command() in short
+    assert "npx @anthropic-ai/mcpb pack packaging/mcpb swag-bot.mcpb" in short
+    assert "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=0" in text
+    assert "swag_start_task" in text
+    skill = (
+        ROOT / "plugins" / "swag-bot" / "skills" / "delegate-to-swag" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert "swag_start_task" in skill
+    assert "CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS=0" in skill
+    assert "/reload-plugins --force" in text
 
 
 def test_docs_include_the_claude_one_liner() -> None:

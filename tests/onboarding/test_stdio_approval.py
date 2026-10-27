@@ -43,12 +43,16 @@ async def _call(
     work: Path,
     home: Path,
     callback: ElicitCallback | None,
-) -> tuple[str, str]:
+) -> tuple[str, str, bool]:
     err_path = work / "stderr.txt"
     env = {
         "PYTHONPATH": os.pathsep.join((str(ROOT), str(ROOT / "src"))),
         "SWAG_HOME": str(home),
         "SWAG_STDIO_FIXTURE": mode,
+        # A configured key makes first-run setup ready so the scripted model
+        # runs. Without it, serve-mcp stops before the task and names
+        # `swag setup --auto`.
+        "OPENAI_API_KEY": "test-key",
         "PATH": os.environ.get("PATH", ""),
         "HOME": os.environ.get("HOME", ""),
         "NO_COLOR": "1",
@@ -69,7 +73,11 @@ async def _call(
                             "swag_run_task",
                             {"goal": "write hello.txt"},
                         )
-        return _text(result), err_path.read_text(encoding="utf-8")
+        return (
+            _text(result),
+            err_path.read_text(encoding="utf-8"),
+            bool(getattr(result, "is_error", False)),
+        )
     except Exception as exc:
         err = err_path.read_text(encoding="utf-8") if err_path.is_file() else ""
         raise AssertionError(f"{exc}\n--- stderr ---\n{err[-4000:]}") from exc
@@ -79,13 +87,13 @@ def _run(
     mode: str,
     tmp_path: Path,
     callback: ElicitCallback | None = None,
-) -> tuple[str, str, Path]:
+) -> tuple[str, str, Path, bool]:
     work = tmp_path / "work"
     home = tmp_path / "home"
     work.mkdir()
     home.mkdir()
-    text, err = anyio.run(_call, mode, work, home, callback)
-    return text, err, work
+    text, err, is_error = anyio.run(_call, mode, work, home, callback)
+    return text, err, work, is_error
 
 
 def _assert_protocol_clean(err: str) -> None:
@@ -95,7 +103,7 @@ def _assert_protocol_clean(err: str) -> None:
 
 
 def test_client_without_elicitation_is_denied_and_the_session_stays_valid(tmp_path: Path) -> None:
-    text, err, work = _run("deny", tmp_path)
+    text, err, work, _is_error = _run("deny", tmp_path)
     _assert_protocol_clean(err)
     assert "Denied" in text
     assert "elicitation" in text
@@ -109,23 +117,45 @@ def test_accepted_elicitation_writes_the_file(tmp_path: Path) -> None:
         seen.append(str(getattr(params, "message", "")))
         return ElicitResult(action="accept", content={"allow": True})
 
-    text, err, work = _run("allow", tmp_path, accept)
+    text, err, work, is_error = _run("allow", tmp_path, accept)
     _assert_protocol_clean(err)
     assert seen, text
     files = list(work.rglob("hello.txt"))
     assert len(files) == 1
     assert files[0].read_text(encoding="utf-8") == "hello\n"
     assert "Wrote hello.txt." in text
+    assert is_error is False
 
 
-def test_declined_elicitation_does_not_write(tmp_path: Path) -> None:
+def test_declined_elicitation_stops_and_writes_an_honest_summary(tmp_path: Path) -> None:
     async def decline(_context: object, _params: object) -> ElicitResult:
         return ElicitResult(action="decline")
 
-    text, err, work = _run("deny", tmp_path, decline)
+    text, err, work, is_error = _run("deny", tmp_path, decline)
     _assert_protocol_clean(err)
+    assert is_error is True
     assert "declined" in text.lower()
     assert list(work.rglob("hello.txt")) == []
+    summaries = list(work.rglob("summary.md"))
+    assert len(summaries) == 1
+    body = summaries[0].read_text(encoding="utf-8")
+    assert "Goal not met." in body
+    assert "declined" in body.lower()
+    assert (summaries[0].parent / ".swag").is_dir()
+
+
+def test_cancelled_elicitation_stops_the_same_way(tmp_path: Path) -> None:
+    async def cancel(_context: object, _params: object) -> ElicitResult:
+        return ElicitResult(action="cancel")
+
+    text, err, work, is_error = _run("deny", tmp_path, cancel)
+    _assert_protocol_clean(err)
+    assert is_error is True
+    assert "declined" in text.lower()
+    assert list(work.rglob("hello.txt")) == []
+    summaries = list(work.rglob("summary.md"))
+    assert len(summaries) == 1
+    assert "not met" in summaries[0].read_text(encoding="utf-8").lower()
 
 
 def test_preapproved_write_does_not_elicit(tmp_path: Path) -> None:
@@ -139,7 +169,7 @@ def test_preapproved_write_does_not_elicit(tmp_path: Path) -> None:
     )
     # No elicitation callback: the client does not advertise the capability.
     # A form request would be an error from the default callback and fail the call.
-    text, err = anyio.run(_call, "allow", work, home, None)
+    text, err, _is_error = anyio.run(_call, "allow", work, home, None)
     _assert_protocol_clean(err)
     files = list(work.rglob("hello.txt"))
     assert len(files) == 1, text
